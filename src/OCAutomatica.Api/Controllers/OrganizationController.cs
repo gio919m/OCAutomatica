@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using OCAutomatica.Api.Auth;
 using OCAutomatica.Api.Buyers;
+using OCAutomatica.Api.Epicor;
 using OCAutomatica.Api.Organization;
 
 namespace OCAutomatica.Api.Controllers;
@@ -39,8 +40,18 @@ public sealed class OrganizationController : ControllerBase
         var credentials = _sessions.GetCredentials(session.SessionId);
         if (credentials is null) return Unauthorized();
 
-        var plants = await _organization.GetPlantsAsync(session.Company, credentials, ct);
-        return Ok(plants);
+        try
+        {
+            var plants = await _organization.GetPlantsAsync(session.Company, credentials, ct);
+            return Ok(plants);
+        }
+        catch (EpicorException ex)
+        {
+            _logger.LogError(ex,
+                "Epicor error ({Reason}) while fetching plants for {Username} on {Company}",
+                ex.Reason, session.Username, session.Company);
+            return HandleEpicorException(ex);
+        }
     }
 
     [HttpPost("context")]
@@ -52,8 +63,19 @@ public sealed class OrganizationController : ControllerBase
         var credentials = _sessions.GetCredentials(session.SessionId);
         if (credentials is null) return Unauthorized();
 
-        var buyer = await _buyers.ResolveDefaultBuyerAsync(
-            session.Company, session.Username, credentials, ct);
+        Buyer? buyer;
+        try
+        {
+            buyer = await _buyers.ResolveDefaultBuyerAsync(
+                session.Company, session.Username, credentials, ct);
+        }
+        catch (EpicorException ex)
+        {
+            _logger.LogError(ex,
+                "Epicor error ({Reason}) while resolving default buyer for {Username} on {Company}",
+                ex.Reason, session.Username, session.Company);
+            return HandleEpicorException(ex);
+        }
 
         _sessions.SetContext(session.SessionId, session.Company, request.Plant, buyer?.BuyerId);
 
@@ -70,5 +92,20 @@ public sealed class OrganizationController : ControllerBase
             buyer?.BuyerId,
             buyer?.Name,
             CanCreateOrders: buyer is not null));
+    }
+
+    private IActionResult HandleEpicorException(EpicorException ex)
+    {
+        var message = ex.Reason switch
+        {
+            EpicorErrorReason.InvalidApiKey =>
+                "La aplicacion no pudo autenticarse con Epicor (clave de API invalida). Avisa a sistemas.",
+            EpicorErrorReason.AccessDenied =>
+                "Tu usuario de Epicor no tiene permiso para consultar esta informacion. Pide que revisen tu perfil de seguridad en Epicor.",
+            _ =>
+                "No se pudo contactar a Epicor. Intenta de nuevo o avisa a sistemas."
+        };
+
+        return StatusCode(503, new { message });
     }
 }
