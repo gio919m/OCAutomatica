@@ -1,7 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using OCAutomatica.Api.Auth;
-using OCAutomatica.Api.Buyers;
 using OCAutomatica.Api.Epicor;
 
 namespace OCAutomatica.Api.Controllers;
@@ -16,18 +15,15 @@ public sealed class AuthController : ControllerBase
 
     private readonly IAuthService _auth;
     private readonly ISessionStore _sessions;
-    private readonly IBuyerService _buyers;
     private readonly ILogger<AuthController> _logger;
 
     public AuthController(
         IAuthService auth,
         ISessionStore sessions,
-        IBuyerService buyers,
         ILogger<AuthController> logger)
     {
         _auth = auth;
         _sessions = sessions;
-        _buyers = buyers;
         _logger = logger;
     }
 

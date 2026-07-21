@@ -53,8 +53,8 @@ public class BuyerServiceTests
     [Fact]
     public async Task ResolveDefaultBuyerAsync_ReturnsNullWhenUserIsOnlyAuthorized()
     {
-        // jyanez puede editar ordenes de LAF-CM5 pero no es su Default Buyer,
-        // por lo tanto no puede crear ordenes a nombre de ese comprador.
+        // jyanez can edit LAF-CM5's orders but is not its Default Buyer,
+        // so they cannot create orders on that buyer's behalf.
         var client = new StubEpicorClient(Response(
             Buyer("LAF-CM5", "ESTEFANY JUAREZ", ("nestefany", true), ("jyanez", false))));
         var service = new BuyerService(client);

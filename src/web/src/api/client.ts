@@ -41,7 +41,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       const body = await response.json()
       if (body?.message) message = body.message
     } catch {
-      // La respuesta no traia JSON; se usa el mensaje generico.
+      // Response body was not JSON; fall back to the generic message.
     }
     throw new ApiError(response.status, message)
   }
