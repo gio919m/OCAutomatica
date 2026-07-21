@@ -174,26 +174,36 @@ git commit -m "chore: scaffold solution with API and test projects"
 - Produces:
   - `record EpicorCredentials(string Username, string Password)`
   - `class EpicorOptions { string BaseUrl; string ApiKey; }`
-  - `class EpicorException : Exception { int StatusCode; bool IsUnauthorized; }`
+  - `enum EpicorErrorReason { InvalidCredentials, InvalidApiKey, AccessDenied, Other }`
+  - `class EpicorException : Exception { int StatusCode; EpicorErrorReason Reason; }`
   - `interface IEpicorClient`
     - `Task<T?> GetAsync<T>(string company, string relativePath, EpicorCredentials creds, CancellationToken ct = default)`
     - `Task<T?> PostAsync<T>(string company, string relativePath, object body, EpicorCredentials creds, CancellationToken ct = default)`
 
 - [ ] **Step 1: Verificar manualmente los endpoints contra el Epicor de pruebas**
 
-**Este paso es manual y no se salta.** Antes de escribir código contra la API, confirma su forma real. Sustituye el host por el de tu ambiente de pruebas.
+**Ya verificado contra el ambiente de pruebas real.** Resultados:
 
-```bash
-curl -sk -u "USUARIO:CONTRASENA" \
-  -H "x-api-key: TU_API_KEY" \
-  "https://SRVTEST/erp102600v2/api/v2/odata/CFSJ_LAF/Erp.BO.CompanySvc/Companies?\$top=1"
+> URL base de pruebas: `https://srvcsjpr2.carnessanjuan.local/Kinetic2026_1`
+> (la ruta completa de un recurso es `{BaseUrl}/api/v2/odata/{Company}/{Servicio}/{Recurso}`)
+
+**Hallazgo importante: Epicor responde HTTP 401 para tres situaciones distintas**, diferenciadas únicamente por el texto de `ErrorMessage` en el cuerpo de la respuesta — nunca por el código de estado:
+
+| Situación | `ErrorMessage` observado |
+|---|---|
+| Contraseña incorrecta | `"Invalid username or password."` |
+| API key incorrecto | `"Invalid API Key {key}.\r\nCompany {company}."` |
+| Usuario válido sin permiso a ese Business Object | `"Access denied ({BO}.{Método})."` |
+
+Ejemplo real capturado (contraseña incorrecta contra `Erp.BO.VendorSvc/Vendors`):
+
+```json
+{"HttpStatus":401,"ReasonPhrase":"REST API Exception","ErrorMessage":"Invalid username or password.","ErrorType":"System.UnauthorizedAccessException","CorrelationId":"41893675-a27f-467a-be02-7af2ed7d708c"}
 ```
 
-Confirma que devuelve HTTP 200 con un JSON que tiene un arreglo `value`. Después prueba con una contraseña incorrecta y confirma que devuelve **401**.
+Esto significa que `EpicorException` no puede clasificar el error solo con el código HTTP — debe leer `ErrorMessage` del cuerpo. El diseño original de este plan (una sola propiedad `IsUnauthorized`) habría reportado "contraseña incorrecta" ante un simple problema de permisos. Los pasos de implementación de esta tarea ya incorporan la corrección.
 
-Anota en el archivo del plan, debajo de este paso, la URL base exacta de tu ambiente de pruebas. El resto del plan la usa.
-
-> URL base de pruebas: `_______________________________`
+**También confirmado: `Erp.BO.CompanySvc` existe pero el usuario de pruebas no tiene permiso** (`Access denied (Erp.BO.Company.GetRows)`) — es una restricción de seguridad de Epicor sobre ese usuario, no un problema de Access Scope del API key. Por eso el "ping" de validación de credenciales (Task 3) usa `Erp.BO.VendorSvc/Vendors` en lugar de `CompanySvc`: todo comprador que use esta aplicación necesariamente tiene permiso de lectura sobre proveedores, así que es un mínimo razonable y además semánticamente relevante para esta app.
 
 - [ ] **Step 2: Escribir el fake de HttpMessageHandler**
 
@@ -315,23 +325,62 @@ public class EpicorClientTests
     }
 
     [Fact]
-    public async Task GetAsync_ThrowsUnauthorizedOn401()
+    public async Task GetAsync_ClassifiesInvalidCredentials()
     {
-        var handler = new FakeHttpMessageHandler(HttpStatusCode.Unauthorized, "");
+        // Real Epicor response body, captured against the test environment.
+        var handler = new FakeHttpMessageHandler(HttpStatusCode.Unauthorized,
+            """{"HttpStatus":401,"ReasonPhrase":"REST API Exception","ErrorMessage":"Invalid username or password.","ErrorType":"System.UnauthorizedAccessException","CorrelationId":"41893675-a27f-467a-be02-7af2ed7d708c"}""");
+        var client = BuildClient(handler);
+
+        var ex = await Assert.ThrowsAsync<EpicorException>(() =>
+            client.GetAsync<ODataList<Company>>(
+                "CFSJ_LAF",
+                "Erp.BO.VendorSvc/Vendors",
+                new EpicorCredentials("user", "malapass")));
+
+        Assert.Equal(EpicorErrorReason.InvalidCredentials, ex.Reason);
+        Assert.Equal(401, ex.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetAsync_ClassifiesInvalidApiKey()
+    {
+        var handler = new FakeHttpMessageHandler(HttpStatusCode.Unauthorized,
+            """{"HttpStatus":401,"ReasonPhrase":"REST API Exception","ErrorMessage":"Invalid API Key llave-invalida.\r\nCompany CFSJ_LAF.","ErrorType":"System.UnauthorizedAccessException","CorrelationId":"96d27258-a13c-4b16-8a51-6ce0d28a5619"}""");
+        var client = BuildClient(handler);
+
+        var ex = await Assert.ThrowsAsync<EpicorException>(() =>
+            client.GetAsync<ODataList<Company>>(
+                "CFSJ_LAF",
+                "Erp.BO.VendorSvc/Vendors",
+                new EpicorCredentials("user", "pass")));
+
+        Assert.Equal(EpicorErrorReason.InvalidApiKey, ex.Reason);
+        Assert.Equal(401, ex.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetAsync_ClassifiesAccessDenied()
+    {
+        // A user can authenticate successfully and still lack rights to a
+        // specific Business Object (Epicor security, independent of the
+        // password being correct). Must not be confused with bad credentials.
+        var handler = new FakeHttpMessageHandler(HttpStatusCode.Unauthorized,
+            """{"HttpStatus":401,"ReasonPhrase":"REST API Exception","ErrorMessage":"Access denied (Erp.BO.Company.GetRows).","ErrorType":"System.UnauthorizedAccessException","CorrelationId":"1d6f1747-acae-4391-9f75-b04f61229a6d"}""");
         var client = BuildClient(handler);
 
         var ex = await Assert.ThrowsAsync<EpicorException>(() =>
             client.GetAsync<ODataList<Company>>(
                 "CFSJ_LAF",
                 "Erp.BO.CompanySvc/Companies",
-                new EpicorCredentials("user", "malapass")));
+                new EpicorCredentials("user", "correcta")));
 
-        Assert.True(ex.IsUnauthorized);
+        Assert.Equal(EpicorErrorReason.AccessDenied, ex.Reason);
         Assert.Equal(401, ex.StatusCode);
     }
 
     [Fact]
-    public async Task GetAsync_ThrowsNonUnauthorizedOn500()
+    public async Task GetAsync_ClassifiesUnrecognizedFailureAsOther()
     {
         var handler = new FakeHttpMessageHandler(
             HttpStatusCode.InternalServerError, "boom");
@@ -343,7 +392,7 @@ public class EpicorClientTests
                 "Erp.BO.CompanySvc/Companies",
                 new EpicorCredentials("user", "pass")));
 
-        Assert.False(ex.IsUnauthorized);
+        Assert.Equal(EpicorErrorReason.Other, ex.Reason);
         Assert.Equal(500, ex.StatusCode);
     }
 }
@@ -352,7 +401,7 @@ public class EpicorClientTests
 - [ ] **Step 4: Correr los tests para verificar que fallan**
 
 Run: `dotnet test --filter EpicorClientTests`
-Expected: FAIL — no compila, los tipos `EpicorClient`, `EpicorOptions`, `EpicorCredentials`, `EpicorException` no existen
+Expected: FAIL — no compila, los tipos `EpicorClient`, `EpicorOptions`, `EpicorCredentials`, `EpicorException`, `EpicorErrorReason` no existen
 
 - [ ] **Step 5: Implementar los tipos de apoyo**
 
@@ -388,14 +437,30 @@ Crear `src/OCAutomatica.Api/Epicor/EpicorException.cs`:
 ```csharp
 namespace OCAutomatica.Api.Epicor;
 
+/// <summary>
+/// Epicor returns HTTP 401 for three unrelated situations, distinguished only
+/// by the ErrorMessage text in the response body: bad credentials, a bad
+/// x-api-key, and a valid user denied access to a specific Business Object.
+/// Callers must not treat every 401 as "wrong password".
+/// </summary>
+public enum EpicorErrorReason
+{
+    InvalidCredentials,
+    InvalidApiKey,
+    AccessDenied,
+    Other
+}
+
 public sealed class EpicorException : Exception
 {
     public int StatusCode { get; }
-    public bool IsUnauthorized => StatusCode == 401;
+    public EpicorErrorReason Reason { get; }
 
-    public EpicorException(int statusCode, string message) : base(message)
+    public EpicorException(int statusCode, EpicorErrorReason reason, string message)
+        : base(message)
     {
         StatusCode = statusCode;
+        Reason = reason;
     }
 }
 ```
@@ -496,10 +561,8 @@ public sealed class EpicorClient : IEpicorClient
 
         if (!response.IsSuccessStatusCode)
         {
-            var detail = await response.Content.ReadAsStringAsync(ct);
-            throw new EpicorException(
-                (int)response.StatusCode,
-                $"Epicor responded {(int)response.StatusCode}: {detail}");
+            var body = await response.Content.ReadAsStringAsync(ct);
+            throw BuildException((int)response.StatusCode, body);
         }
 
         var json = await response.Content.ReadAsStringAsync(ct);
@@ -507,13 +570,52 @@ public sealed class EpicorClient : IEpicorClient
             ? default
             : JsonSerializer.Deserialize<T>(json, JsonOptions);
     }
+
+    private static EpicorException BuildException(int statusCode, string body)
+    {
+        string? errorMessage = null;
+        try
+        {
+            var parsed = JsonSerializer.Deserialize<EpicorErrorBody>(body, JsonOptions);
+            errorMessage = parsed?.ErrorMessage;
+        }
+        catch (JsonException)
+        {
+            // Body was not Epicor's structured error shape; fall through with the raw text.
+        }
+
+        var reason = ClassifyReason(statusCode, errorMessage);
+        var message = errorMessage ?? $"Epicor responded {statusCode}: {body}";
+        return new EpicorException(statusCode, reason, message);
+    }
+
+    private static EpicorErrorReason ClassifyReason(int statusCode, string? errorMessage)
+    {
+        if (statusCode != 401 || errorMessage is null) return EpicorErrorReason.Other;
+
+        if (errorMessage.StartsWith("Invalid username or password", StringComparison.OrdinalIgnoreCase))
+            return EpicorErrorReason.InvalidCredentials;
+
+        if (errorMessage.StartsWith("Invalid API Key", StringComparison.OrdinalIgnoreCase))
+            return EpicorErrorReason.InvalidApiKey;
+
+        if (errorMessage.StartsWith("Access denied", StringComparison.OrdinalIgnoreCase))
+            return EpicorErrorReason.AccessDenied;
+
+        return EpicorErrorReason.Other;
+    }
+
+    private sealed class EpicorErrorBody
+    {
+        public string? ErrorMessage { get; set; }
+    }
 }
 ```
 
 - [ ] **Step 7: Correr los tests para verificar que pasan**
 
 Run: `dotnet test --filter EpicorClientTests`
-Expected: `Passed! - Failed: 0, Passed: 5`
+Expected: `Passed! - Failed: 0, Passed: 7`
 
 - [ ] **Step 8: Commit**
 
@@ -536,7 +638,7 @@ git commit -m "feat: add typed Epicor REST v2 client with auth headers and error
 - Produces:
   - `interface IAuthService { Task<bool> ValidateAsync(EpicorCredentials creds, string company, CancellationToken ct = default) }`
 
-**Nota de diseño:** la validación se hace con una consulta trivial a `Erp.BO.CompanySvc`. Si Epicor responde 200, las credenciales sirven. Si responde 401, no. Cualquier otro error se propaga — un fallo de red no debe presentarse al usuario como "contraseña incorrecta". Este es exactamente el defecto 10.7 del spec, evitado desde el diseño.
+**Nota de diseño:** la validación se hace con una consulta trivial a `Erp.BO.VendorSvc/Vendors` (no `CompanySvc` — el usuario de pruebas no tiene permiso ahí por seguridad de Epicor, no por credenciales; ver el hallazgo de Task 2). Si Epicor responde 200, las credenciales sirven. Si responde con `EpicorErrorReason.InvalidCredentials`, no. **Cualquier otro motivo se propaga** — un API key inválido o un usuario sin permiso a Vendors no deben presentarse al usuario como "contraseña incorrecta". Este es exactamente el defecto 10.7 del spec, evitado desde el diseño.
 
 - [ ] **Step 1: Escribir los tests que fallan**
 
@@ -578,10 +680,10 @@ public class AuthServiceTests
     }
 
     [Fact]
-    public async Task ValidateAsync_ReturnsFalseOnUnauthorized()
+    public async Task ValidateAsync_ReturnsFalseOnInvalidCredentials()
     {
-        var client = new StubEpicorClient(
-            () => throw new EpicorException(401, "unauthorized"));
+        var client = new StubEpicorClient(() => throw new EpicorException(
+            401, EpicorErrorReason.InvalidCredentials, "Invalid username or password."));
         var service = new AuthService(client);
 
         var result = await service.ValidateAsync(
@@ -591,10 +693,26 @@ public class AuthServiceTests
     }
 
     [Fact]
-    public async Task ValidateAsync_PropagatesNonAuthErrors()
+    public async Task ValidateAsync_PropagatesAccessDenied()
     {
-        var client = new StubEpicorClient(
-            () => throw new EpicorException(503, "service unavailable"));
+        // The password can be correct while the user still lacks rights to
+        // Erp.BO.VendorSvc in Epicor's own security. That is not a login
+        // failure and must not be reported as one.
+        var client = new StubEpicorClient(() => throw new EpicorException(
+            401, EpicorErrorReason.AccessDenied, "Access denied (Erp.BO.Vendor.GetRows)."));
+        var service = new AuthService(client);
+
+        var ex = await Assert.ThrowsAsync<EpicorException>(() =>
+            service.ValidateAsync(new EpicorCredentials("jyanez", "correcta"), "CFSJ_LAF"));
+
+        Assert.Equal(EpicorErrorReason.AccessDenied, ex.Reason);
+    }
+
+    [Fact]
+    public async Task ValidateAsync_PropagatesOtherErrors()
+    {
+        var client = new StubEpicorClient(() => throw new EpicorException(
+            503, EpicorErrorReason.Other, "service unavailable"));
         var service = new AuthService(client);
 
         var ex = await Assert.ThrowsAsync<EpicorException>(() =>
@@ -644,7 +762,11 @@ namespace OCAutomatica.Api.Auth;
 
 public sealed class AuthService : IAuthService
 {
-    private const string ProbePath = "Erp.BO.CompanySvc/Companies?$top=1";
+    // Every buyer using this application must be able to read Vendors in
+    // Epicor — it is the app's core purpose. CompanySvc was tried first and
+    // rejected for the test user with an Access Scope/security error, which
+    // is unrelated to whether the password is correct.
+    private const string ProbePath = "Erp.BO.VendorSvc/Vendors?$top=1";
 
     private readonly IEpicorClient _epicor;
 
@@ -660,7 +782,7 @@ public sealed class AuthService : IAuthService
             await _epicor.GetAsync<object>(company, ProbePath, credentials, ct);
             return true;
         }
-        catch (EpicorException ex) when (ex.IsUnauthorized)
+        catch (EpicorException ex) when (ex.Reason == EpicorErrorReason.InvalidCredentials)
         {
             return false;
         }
@@ -671,7 +793,7 @@ public sealed class AuthService : IAuthService
 - [ ] **Step 5: Correr los tests para verificar que pasan**
 
 Run: `dotnet test --filter AuthServiceTests`
-Expected: `Passed! - Failed: 0, Passed: 3`
+Expected: `Passed! - Failed: 0, Passed: 4`
 
 - [ ] **Step 6: Commit**
 
@@ -953,24 +1075,29 @@ git commit -m "feat: add server-side session store with Data Protection for cred
 
 **Regla de negocio (spec sección 5):** el BuyerID de una orden nueva es aquel donde el usuario de la sesión está marcado como **Default Buyer**. Si no tiene ninguno, el servicio devuelve `null` y la aplicación bloquea la creación de órdenes en vez de inventar un comprador. Esto reemplaza el `"LNC-CM2"` fijo del código actual, que podía atribuir órdenes a compradores de otra sucursal.
 
-**Nota:** `Erp.BO.BuyerSvc` expone `PurAgent` y su tabla hija de usuarios autorizados. El nombre exacto de la colección hija debe confirmarse en el paso 1.
+- [ ] **Step 1: Verificar la forma real del servicio de Buyer Maintenance**
 
-- [ ] **Step 1: Verificar la forma de `BuyerSvc` contra el Epicor de pruebas**
-
-**Paso manual.** Ejecuta:
+**Ya verificado contra el ambiente de pruebas.** `Erp.BO.BuyerSvc` **no existe** — el nombre real del servicio es **`Erp.BO.PurAgentSvc`**, y la tabla que respalda a "Buyer" es `PurAgent`. Consulta usada:
 
 ```bash
-curl -sk -u "USUARIO:CONTRASENA" \
-  -H "x-api-key: TU_API_KEY" \
-  "https://SRVTEST/erp102600v2/api/v2/odata/CFSJ_LAF/Erp.BO.BuyerSvc/Buyers?\$top=2&\$expand=*"
+curl -sk -u "USUARIO:CONTRASENA" -H "x-api-key: TU_API_KEY" \
+  "https://srvcsjpr2.carnessanjuan.local/Kinetic2026_1/api/v2/odata/CFSJ_LAF/Erp.BO.PurAgentSvc/PurAgents?\$filter=BuyerID%20eq%20%27LNC-CM2%27&\$expand=PurAuths"
 ```
 
-Anota debajo:
-- Nombre de la colección hija de usuarios autorizados: `________________`
-- Nombre del campo que indica Default Buyer: `________________`
-- Nombre del campo con el usuario de Epicor: `________________`
+Respuesta real (con el usuario de pruebas `epicor` ya asignado como comprador por defecto de `LNC-CM2`):
 
-Si los nombres difieren de los usados abajo (`BuyerAuth`, `DefaultBuyer`, `DcdUserID`), ajusta el DTO en el paso 3 antes de continuar. Los tests no cambian: prueban la regla de negocio, no los nombres de Epicor.
+```json
+{"value":[{"BuyerID":"LNC-CM2","Name":"OC AUTOMATICA","PurAuths":[
+  {"DcdUserID":"epicor","IsPrimaryUser":true,"Name":"...","BuyerID":"LNC-CM2","Company":"CFSJ_LAF"}
+]}]}
+```
+
+Nombres confirmados:
+- Colección hija de usuarios autorizados: **`PurAuths`** (no `BuyerAuth`)
+- Campo que indica Default Buyer: **`IsPrimaryUser`** (no `DefaultBuyer`) — corresponde al checkbox "Default Buyer" de Buyer Maintenance
+- Campo con el usuario de Epicor: **`DcdUserID`** (esto sí coincidía con la suposición original)
+
+El DTO del paso 3 ya usa los nombres correctos.
 
 - [ ] **Step 2: Escribir los tests que fallan**
 
@@ -1007,8 +1134,8 @@ public class BuyerServiceTests
         {
             BuyerID = id,
             Name = name,
-            BuyerAuth = auth
-                .Select(a => new BuyerAuthDto { DcdUserID = a.User, DefaultBuyer = a.IsDefault })
+            PurAuths = auth
+                .Select(a => new PurAuthDto { DcdUserID = a.User, IsPrimaryUser = a.IsDefault })
                 .ToList()
         };
 
@@ -1091,8 +1218,9 @@ namespace OCAutomatica.Api.Buyers;
 /// <summary>Buyer as exposed to the rest of the application.</summary>
 public sealed record Buyer(string BuyerId, string Name);
 
-// DTOs matching the Erp.BO.BuyerSvc payload. Property names must match
-// Epicor exactly — verify them against the test environment before use.
+// DTOs matching the Erp.BO.PurAgentSvc payload, confirmed against the test
+// environment (see Task 5, Step 1). PurAgent is the underlying table for
+// Buyer Maintenance; PurAuth is its "Authorized Users" child table.
 
 public sealed class BuyerListResponse
 {
@@ -1103,13 +1231,15 @@ public sealed class BuyerDto
 {
     public string BuyerID { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
-    public List<BuyerAuthDto> BuyerAuth { get; set; } = new();
+    public List<PurAuthDto> PurAuths { get; set; } = new();
 }
 
-public sealed class BuyerAuthDto
+public sealed class PurAuthDto
 {
     public string DcdUserID { get; set; } = string.Empty;
-    public bool DefaultBuyer { get; set; }
+
+    /// <summary>Backs the "Default Buyer" checkbox in Buyer Maintenance's Authorized Users tab.</summary>
+    public bool IsPrimaryUser { get; set; }
 }
 ```
 
@@ -1148,7 +1278,7 @@ namespace OCAutomatica.Api.Buyers;
 
 public sealed class BuyerService : IBuyerService
 {
-    private const string BuyersPath = "Erp.BO.BuyerSvc/Buyers?$expand=BuyerAuth";
+    private const string BuyersPath = "Erp.BO.PurAgentSvc/PurAgents?$expand=PurAuths";
 
     private readonly IEpicorClient _epicor;
 
@@ -1166,8 +1296,8 @@ public sealed class BuyerService : IBuyerService
         if (response is null) return null;
 
         var match = response.Value.FirstOrDefault(buyer =>
-            buyer.BuyerAuth.Any(auth =>
-                auth.DefaultBuyer &&
+            buyer.PurAuths.Any(auth =>
+                auth.IsPrimaryUser &&
                 string.Equals(auth.DcdUserID, username, StringComparison.OrdinalIgnoreCase)));
 
         return match is null ? null : new Buyer(match.BuyerID, match.Name);
@@ -1288,14 +1418,24 @@ public sealed class AuthController : ControllerBase
         }
         catch (EpicorException ex)
         {
-            // Never report an infrastructure failure as a wrong password.
+            // AuthService already turns InvalidCredentials into accepted=false,
+            // so only InvalidApiKey, AccessDenied, or Other reach this catch.
+            // None of them are a wrong password and must not be reported as one.
             _logger.LogError(ex,
-                "Epicor unreachable while validating {Username} on {Company}",
-                request.Username, request.Company);
-            return StatusCode(503, new
+                "Epicor error ({Reason}) while validating {Username} on {Company}",
+                ex.Reason, request.Username, request.Company);
+
+            var message = ex.Reason switch
             {
-                message = "No se pudo contactar a Epicor. Intenta de nuevo o avisa a sistemas."
-            });
+                EpicorErrorReason.InvalidApiKey =>
+                    "La aplicacion no pudo autenticarse con Epicor (clave de API invalida). Avisa a sistemas.",
+                EpicorErrorReason.AccessDenied =>
+                    "Tu usuario de Epicor no tiene permiso para consultar proveedores. Pide que revisen tu perfil de seguridad en Epicor.",
+                _ =>
+                    "No se pudo contactar a Epicor. Intenta de nuevo o avisa a sistemas."
+            };
+
+            return StatusCode(503, new { message });
         }
 
         if (!accepted)
@@ -1424,14 +1564,14 @@ public List<string> Companies { get; set; } = new();
 ```bash
 cd src/OCAutomatica.Api
 dotnet user-secrets init
-dotnet user-secrets set "Epicor:BaseUrl" "https://SRVTEST/erp102600v2"
+dotnet user-secrets set "Epicor:BaseUrl" "https://srvcsjpr2.carnessanjuan.local/Kinetic2026_1"
 dotnet user-secrets set "Epicor:ApiKey" "TU_API_KEY"
 ```
 
 - [ ] **Step 6: Verificar que compila y los tests siguen pasando**
 
 Run: `dotnet test`
-Expected: `Passed! - Failed: 0, Passed: 21`
+Expected: `Passed! - Failed: 0, Passed: 24`
 
 - [ ] **Step 7: Probar el login manualmente contra el Epicor de pruebas**
 
@@ -1725,7 +1865,7 @@ builder.Services.AddScoped<IOrganizationService, OrganizationService>();
 - [ ] **Step 7: Verificar que todo compila y pasa**
 
 Run: `dotnet test`
-Expected: `Passed! - Failed: 0, Passed: 23`
+Expected: `Passed! - Failed: 0, Passed: 26`
 
 - [ ] **Step 8: Commit**
 
@@ -2126,7 +2266,7 @@ git commit -m "feat: add React login and context selection screens"
 
 ## Verificación final del Plan 1
 
-- [ ] `dotnet test` pasa completo (23 tests)
+- [ ] `dotnet test` pasa completo (26 tests)
 - [ ] Un comprador puede autenticarse con sus credenciales de Epicor
 - [ ] Una contraseña incorrecta devuelve 401 con mensaje claro
 - [ ] Epicor caído devuelve 503 con mensaje distinto al de contraseña incorrecta
