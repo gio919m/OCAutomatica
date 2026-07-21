@@ -26,3 +26,7 @@ app.UseMiddleware<SessionMiddleware>();
 app.MapControllers();
 
 app.Run();
+
+// Allows Microsoft.AspNetCore.Mvc.Testing's WebApplicationFactory<Program> to
+// reference this top-level-statement entry point from the test project.
+public partial class Program { }
