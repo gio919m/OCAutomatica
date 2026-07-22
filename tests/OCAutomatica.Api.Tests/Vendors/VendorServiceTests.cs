@@ -65,13 +65,33 @@ public class VendorServiceTests
         // Prevents a vendor name containing a single quote from breaking the
         // OData $filter (same class of bug as the legacy sp_EnviaOC_V2 SQL
         // injection — but here it's an OData filter, so the fix is escaping
-        // the embedded quote by doubling it, OData's own escape convention.
+        // the embedded quote by doubling it, OData's own escape convention).
+        // The doubled quote is then percent-encoded (Uri.EscapeDataString
+        // escapes ' to %27 on this runtime), which is transparent to Epicor
+        // once the server URL-decodes the query string, so the doubled
+        // quote still reaches the OData parser as "''".
         var client = new StubEpicorClient(Response());
         var service = new VendorService(client);
 
         await service.SearchAsync("CFSJ_LAF", "O'BRIEN", Creds);
 
-        Assert.Contains("O''BRIEN", client.LastRelativePath);
+        Assert.Contains("O%27%27BRIEN", client.LastRelativePath);
+    }
+
+    [Fact]
+    public async Task SearchAsync_PercentEncodesAmpersandInSearchTerm()
+    {
+        // A raw '&' in the search term would be parsed as a new query
+        // parameter by the OData endpoint, silently breaking the $top=20
+        // cap (or worse). It must be percent-encoded before it reaches the
+        // query string.
+        var client = new StubEpicorClient(Response());
+        var service = new VendorService(client);
+
+        await service.SearchAsync("CFSJ_LAF", "SMITH & SONS", Creds);
+
+        Assert.Contains("%26", client.LastRelativePath);
+        Assert.DoesNotContain("SMITH & SONS", client.LastRelativePath);
     }
 
     [Fact]

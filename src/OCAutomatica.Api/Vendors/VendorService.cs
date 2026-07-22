@@ -14,8 +14,10 @@ public sealed class VendorService : IVendorService
         EpicorCredentials credentials,
         CancellationToken ct = default)
     {
-        // OData escapes an embedded single quote by doubling it.
-        var escaped = search.Replace("'", "''");
+        // OData escapes an embedded single quote by doubling it, then the
+        // result must be percent-encoded so characters like & # % can't
+        // corrupt the query string (e.g. break the $top=20 cap).
+        var escaped = Uri.EscapeDataString(search.Replace("'", "''"));
         var relativePath =
             $"Erp.BO.VendorSvc/Vendors?$filter=contains(Name,'{escaped}') or contains(VendorID,'{escaped}')&$top=20";
 
