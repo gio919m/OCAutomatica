@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api, type Vendor } from '../api/client'
 
 interface Props {
@@ -10,6 +10,7 @@ export function VendorSearch({ onVendorSelected }: Props) {
   const [results, setResults] = useState<Vendor[]>([])
   const [selected, setSelected] = useState<Vendor | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const latestQueryRef = useRef('')
 
   useEffect(() => {
     if (query.trim().length < 2 || selected) {
@@ -17,11 +18,21 @@ export function VendorSearch({ onVendorSelected }: Props) {
       return
     }
 
+    const trimmedQuery = query.trim()
+
     const handle = setTimeout(() => {
+      setError(null)
+      latestQueryRef.current = trimmedQuery
       api
-        .vendors.search(query)
-        .then(setResults)
-        .catch((err) => setError(err instanceof Error ? err.message : 'Error de busqueda.'))
+        .vendors.search(trimmedQuery)
+        .then((data) => {
+          if (latestQueryRef.current === trimmedQuery) setResults(data)
+        })
+        .catch((err) => {
+          if (latestQueryRef.current === trimmedQuery) {
+            setError(err instanceof Error ? err.message : 'Error de busqueda.')
+          }
+        })
     }, 300)
 
     return () => clearTimeout(handle)
