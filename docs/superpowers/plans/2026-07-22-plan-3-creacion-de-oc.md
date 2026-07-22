@@ -4,7 +4,7 @@
 
 **Goal:** Un comprador captura comentarios, ve los Cambios Físicos pendientes del proveedor, y al presionar "Procesar" se crea en Epicor una orden de compra **aprobada**, transaccional, con el BuyerID correcto — o recibe un error descriptivo si algo falla, sin dejar una OC a medias.
 
-**Architecture:** Se agrega una nueva capacidad a `IEpicorClient` para invocar **Epicor Functions** (mecanismo REST distinto de las BAQs/BO usadas en los Planes 1-2 — confirmado en la guía oficial, sección "Invoking Epicor Functions"). La creación de la OC se delega a una única Function (`OCA_CrearOC`) que ejecuta toda la secuencia `GetNewPOHeader → ChangeVendor → ... → ChangeApproveSwitch → Update` dentro de una transacción del lado de Epicor — resolviendo de una vez la falta de atomicidad del código legacy (defecto 10.3) y evitando ~160 llamadas HTTP desde el backend. Los Cambios Físicos pendientes se consultan dos veces, independientemente, por diseño (ver spec, sección 6): un BAQ para la vista previa en la interfaz, y la propia Function para construir el `CommentText` en el momento de crear la orden — así el comentario nunca depende de lo que la interfaz llegó a mostrar.
+**Architecture:** Se agrega una nueva capacidad a `IEpicorClient` para invocar **Epicor Functions** (mecanismo REST distinto de las BAQs/BO usadas en los Planes 1-2 — confirmado en la guía oficial, sección "Invoking Epicor Functions"). La creación de la OC se delega a una única Function (`OCACrearOC`) que ejecuta toda la secuencia `GetNewPOHeader → ChangeVendor → ... → ChangeApproveSwitch → Update` dentro de una transacción del lado de Epicor — resolviendo de una vez la falta de atomicidad del código legacy (defecto 10.3) y evitando ~160 llamadas HTTP desde el backend. Los Cambios Físicos pendientes se consultan dos veces, independientemente, por diseño (ver spec, sección 6): un BAQ para la vista previa en la interfaz, y la propia Function para construir el `CommentText` en el momento de crear la orden — así el comentario nunca depende de lo que la interfaz llegó a mostrar.
 
 **Tech Stack:** .NET 8 y React 19 + TypeScript ya en uso (Planes 1-2). Sin librerías nuevas.
 
@@ -42,7 +42,7 @@ Content-Type: application/json
 - **NO usar FluentAssertions.** Solo asserts de xUnit.
 - Ambiente de desarrollo: **el Epicor de pruebas** (`CFSJ_LAF`), nunca producción.
 - Mensajes de la interfaz en **español**; código y comentarios en **inglés**.
-- Cantidades y costos son **decimales** en todo el flujo — nunca truncados a `int` (defecto 10.1, ya corregido en el Plan 2 para el grid; esta regla se extiende al envío hacia `OCA_CrearOC`).
+- Cantidades y costos son **decimales** en todo el flujo — nunca truncados a `int` (defecto 10.1, ya corregido en el Plan 2 para el grid; esta regla se extiende al envío hacia `OCACrearOC`).
 - Toda llamada a `IEpicorClient` con un valor interpolado en la URL debe escapar ese valor con `Uri.EscapeDataString` — el cliente no encapa nada por su cuenta (hallazgo real del Plan 2).
 - Seguir los patrones ya establecidos: servicios con `IEpicorClient` inyectado; controladores que verifican `HttpContext.Items[SessionMiddleware.ItemKey]`, resuelven credenciales con `_sessions.GetCredentials(session.SessionId)`, y atrapan `EpicorException` mapeando `ex.Reason` a un mensaje en español vía un helper `HandleEpicorException` — **excepto en `PurchaseOrdersController`, donde el motivo `Other` debe mostrar el mensaje real de Epicor en vez de uno genérico** (ver Task 5 — es un requisito explícito del spec: "Salida: `poNum`, o error descriptivo").
 - **Cualquier clase de test que implemente `IEpicorClient` directamente debe actualizarse** al agregar el método nuevo a la interfaz (Task 1) — ver la lista exacta de archivos afectados en esa tarea. Si se omite alguno, la solución completa deja de compilar.
@@ -407,111 +407,224 @@ Reporta el resultado (o pide que lo verifique yo por REST) antes de dar por comp
 
 ---
 
-## Task 3: Publicar la Function `OCA_CrearOC` en Epicor
+## Task 3: Publicar la Function `OCACrearOC` en Epicor
 
-**Este es un paso manual en Epicor (Function Library Designer), no una tarea de código.** No la despaches a un subagente implementador — requiere una interfaz gráfica que ningún subagente tiene.
+**Este es un paso manual en Epicor (Epicor Functions Maintenance), no una tarea de código.** No la despaches a un subagente implementador — requiere una interfaz gráfica que ningún subagente tiene.
 
 **Por qué existe esta tarea:** reemplaza `btnProc_Click`, trasladando la secuencia completa de creación de la OC a una sola transacción del lado de Epicor (defecto 10.3), eliminando el `BuyerID` fijo (defecto 10.4, ya resuelto río arriba: la API se lo pasa ya calculado) y la fuga de conexión SQL directa (defecto 10.5: la Function consulta Cambios Físicos con una BO/BAQ interna de Epicor, nunca con una `SqlConnection`).
 
-### 3.1 — Cómo entrar y crear la librería
+**Actualización — cambio de enfoque confirmado:** este plan originalmente recomendaba "Widget Function with Code" (GUI + widgets). Se cambió a **Custom Code Function** (C# libre) tras confirmar que sí es viable: el usuario ya tiene un ejemplo propio, funcionando en producción, que invoca `POSvc` desde código libre con `this.CallService<Erp.Contracts.POSvcContract>(BO => { ... })`. Esto hace innecesaria la pelea con widgets — se escribe C# directo, más parecido a lo que ya se conoce de `POAdapter`. La librería y la Function ya se crearon con el nombre **`OCACrearOC`** (sin guion bajo, mismo nombre para ambas) — el código de la Task 5 usa ese nombre real, no `OCA`/`OCA_CrearOC` como se planeaba originalmente.
 
-Menú de Epicor: **System Management > Business Process Management > Epicor Functions** (Epicor Functions Maintenance). Esto es una herramienta distinta al BAQ Designer que ya conoces del Plan 2 — aquí va el detalle paso a paso porque es la primera vez que se usa en este proyecto.
+**Además, se verificaron por REST contra el ambiente de pruebas real las firmas de los 9 métodos de `POSvc` usados aquí** (nombres de parámetros confirmados llamando cada método vacío y leyendo el error "Parameter X is not found", luego completando la cadena real hasta crear una OC de prueba sin aprobar en `CFSJ_LAF`, PONum **3218**, comentario "*** PRUEBA TECNICA... IGNORAR / BORRAR ***" — puedes borrarla o dejarla, no está aprobada ni afecta nada). Y se encontró una segunda referencia real: un proyecto hermano (`Portal Porveedores/server/src/services/epicor.ts`) que ya crea OCs aprobadas por REST puro en producción, con lecciones muy valiosas que el código legacy y el manual no explican — incorporadas abajo.
 
-1. En el campo **Library**, escribe el ID de la librería nueva, por ejemplo `OCA`, y presiona Tab. Cuando te pregunte si quieres crear el registro, **Sí**.
-2. Descripción corta, por ejemplo "OC Automatica - Creacion de ordenes".
-3. En las opciones de la librería, **marca "Custom Code Widgets"** — esto es obligatorio para poder usar la acción "Execute Custom Code" más abajo (sección 3.6). Sin esto marcado, esa acción no aparece disponible.
-4. Guarda la librería.
-5. Ve a la pestaña **Security** de la librería y agrega `CFSJ_LAF` a **Authorized Companies** — **si al probar la Function por REST más adelante recibes 404, este es el primer lugar a revisar**, es el error documentado más común para Functions no mapeadas a la compañía desde la que se llaman.
+### 3.1 — Librería y Function (ya creadas)
+
+Ya hecho: librería **`OCACrearOC`**, Function **`OCACrearOC`** dentro de ella, tipo **Custom Code**, con **"Custom Code Functions"** marcado (no "Custom Code Widgets" — ese es para el otro tipo). Falta:
+
+1. En **DB Access from Code**, cambia de **None** a **Read Only** — sin esto, el código no puede leer `UD104A`/`UD104` para los Cambios Físicos (ver 3.2). "Custom Code Functions" ya activó este campo, solo falta elegir la opción.
+2. Pestaña **Security** → agrega `CFSJ_LAF` a **Authorized Companies** — si al probar por REST recibes 404, este es el primer lugar a revisar.
 
 ### 3.2 — Referencias de la librería (Library References)
 
-Antes de poder usar los BOs y las tablas dentro de la Function, hay que declararlos como referencias de la librería (pestaña **References**, dentro de la misma Epicor Functions Maintenance):
+Pestaña **References**:
 
-- **Services** (tipo Business Object): agrega `Erp.BO.POSvc` — es el BO que expone `GetNewPOHeader`, `ChangeVendor`, `GetNewPODetail`, `PartStatusValidationMessages`, `ChangeDetailPartNum`, `ChangeDetailCalcOurQty`, `ChangeUnitPriceConfirmOverride`, `ChangeUnitPrice`, `ChangeApproveSwitch` y `Update` — todos los métodos que se invocan en la sección 3.6.
-- **Tables**: agrega `UD104A` y `UD104` — se necesitan para la acción "Fill Table By Query" de la sección 3.6, paso 4. Déjalas como solo lectura (no marques "Updatable" — la Function solo las consulta, nunca las modifica).
+- **Services**: agrega `Erp.BO.POSvc` — expone el contrato `Erp.Contracts.POSvcContract` que el código usa vía `this.CallService<Erp.Contracts.POSvcContract>(...)`.
+- **Tables**: agrega `UD104A` y `UD104`, ambas solo lectura (no marques "Updatable").
 
-Estas referencias quedan disponibles para todas las Functions de la librería `OCA`, no solo para `OCA_CrearOC`.
+### 3.3 — Parámetros de entrada y salida
 
-### 3.3 — Crear la Function: tipo "Widget Function with Code"
-
-Dentro de la librería `OCA`: **New > Add Widget Function with Code**. Este tipo (no "Widget Function" simple, ni "Custom Code Function" de código libre) es el que necesitas porque combina las dos cosas que hacen falta aquí:
-
-- Acciones declarativas tipo **Invoke BO Method** — para llamar a cada método de `POSvc` en orden, igual que hacía `POAdapter` en el código legacy, sin tener que escribir el "plumbing" de conexión a mano.
-- El widget **Execute Custom Code** (habilitado gracias a que marcaste "Custom Code Widgets" en el paso 3.1) — para la lógica que no es una simple llamada a BO: agrupar los Cambios Físicos en memoria, armar el texto del comentario, y decidir si detener la transacción cuando una parte está bloqueada.
-
-Nombra la Function **`OCA_CrearOC`**.
-
-### 3.4 — Parámetros de entrada y salida
-
-En la pestaña **Signature**, define estos parámetros de entrada (Direction = In):
+Pestaña **Signature**. Entrada (Direction = In):
 
 | Parámetro | Tipo | Descripción |
 |---|---|---|
 | `Plant` | string | Planta activa de la sesión |
 | `VendorID` | string | Proveedor seleccionado |
 | `BuyerID` | string | Ya resuelto por la API (Plan 1) — la Function **no** lo calcula, solo lo usa |
-| `Comentarios` | string | Texto libre capturado por el comprador — **sin** el bloque de Cambios Físicos, que la Function arma por su cuenta (ver 3.6) |
-| `Lineas` | Tabla (tableset), columnas `PartNum` (string), `Cantidad` (decimal), `Costo` (decimal), `UOM` (string) | Artículos marcados, ya validados como decimales por el frontend (Plan 2) |
+| `Comentarios` | string | Texto libre del comprador — **sin** el bloque de Cambios Físicos, que el código arma por su cuenta |
+| `Lineas` | Tabla (tableset), columnas `PartNum` (string), `Cantidad` (decimal), `Costo` (decimal), `UOM` (string) | Artículos marcados, ya decimales (Plan 2) |
 
-Y un parámetro de salida (Direction = Out):
+Salida (Direction = Out):
 
 | Parámetro | Tipo | Descripción |
 |---|---|---|
 | `PONum` | int | Número de la orden creada |
 
-Cualquier fallo de negocio (parte bloqueada, proveedor inválido, etc.) debe **detener la ejecución con un mensaje descriptivo** — usando la acción **Raise Exception** del Function Designer — nunca devolver `PONum = 0` silenciosamente. Esto es lo que hace que el backend (Task 5) reciba un `EpicorException` con el mensaje real, en vez de un éxito falso.
+**Nota sobre nombres:** tu propio ejemplo usa el prefijo `ip`/`op` (`ipPONum`, `opMessage`) — es un estilo válido, no un requisito de Epicor. Aquí se usan nombres limpios (`Plant`, `VendorID`...) porque deben coincidir **exactamente** con las propiedades del DTO que ya arma el backend en la Task 5 (`PurchaseOrderFunctionInput`/`PurchaseOrderFunctionOutput`) — Epicor hace match exacto de nombre de parámetro contra la propiedad JSON del body (confirmado por REST: `poNUM` funciona, `poNum` no). Si prefieres el prefijo `ip`/`op`, úsalo, pero entonces avísame para actualizar el DTO de la Task 5 con los mismos nombres.
 
-### 3.5 — Variables de la Function
+Cualquier fallo (parte bloqueada, error de Epicor, etc.) debe **detener la ejecución lanzando `BLException`** con un mensaje descriptivo — nunca dejar `PONum` en 0 silenciosamente. Eso es lo que el backend (Task 5) recibe como `EpicorException` con el mensaje real.
 
-En la pestaña **Variables**, crea (los vas a necesitar para pasar datos entre los widgets del workflow):
+### 3.4 — El código
 
-- `ds` (tableset del `POSvc` — normalmente se crea automáticamente al configurar el primer `Invoke BO Method` contra `GetNewPOHeader`, mapeando su parámetro de dataset a una variable de este tipo).
-- `cambiosFisicosRaw` (tableset, resultado de la acción Fill Table By Query de la sección 3.6, paso 3).
-- `commentText` (string) — para armar el comentario una sola vez, antes de asignarlo al header.
-- `poNum` (int) — mapeado como salida de `GetNewPOHeader`/`Update` y luego copiado al parámetro de salida `PONum`.
+Pegar en el editor de la Function (botón **Edit**). **Nota sobre el orden exacto de parámetros:** los *nombres* de cada parámetro de `POSvc` abajo están confirmados por REST contra el ambiente real (ver arriba) — pero el *orden* dentro de cada llamada C# (y si es `ref`/`out`/valor) es mi mejor inferencia a partir de tus propios ejemplos, no algo que pude verificar 1:1 desde REST. Usa **Ctrl+Espacio** después de escribir `BO.` para que el editor te muestre la firma real y ajusta el orden si el compilador se queja — es rápido y elimina la única incertidumbre real que queda.
 
-### 3.6 — Secuencia del workflow (una sola transacción)
-
-Traducción directa de `btnProc_Click`, widget por widget, con las correcciones ya incorporadas. Cada número es un elemento que arrastras al área de diseño del Function Designer, en este orden:
-
-1. **Invoke BO Method** → `Erp.BO.POSvc.GetNewPOHeader`. Mapea su dataset de salida a la variable `ds`.
-2. **Set Field** sobre `ds.POHeader.BuyerID` = parámetro `BuyerID` (**no** un valor fijo — defecto 10.4; a diferencia del legacy, que solo lo asignaba si venía vacío, aquí siempre se asigna el que llega, porque la API ya garantiza que sea válido antes de llamar a la Function — ver Task 5).
-3. **Invoke BO Method** → `ChangeVendor`, parámetro `vendorID` = `VendorID`, sobre `ds`.
-4. **Consultar Cambios Físicos pendientes, aquí mismo, dentro de la Function** — no reutilices el resultado del BAQ de la interfaz (Task 2), por diseño: el comentario debe reflejar el estado en el momento exacto de crear la orden. Traducción del query legacy (ver la sección "Query real de Cambios Físicos" al inicio del plan) usando las herramientas del Function Designer en vez de una `SqlConnection` directa (defecto 10.5):
-   - **Fill Table By Query**, target = variable `cambiosFisicosRaw`. Diseña la query (botón "Designed") contra las tablas de referencia `UD104A`/`UD104` (sección 3.2): join `UD104A.Company = UD104.Company AND UD104A.Key1 = UD104.Key1`, criteria `UD104A.Character06 = 'PENDIENTE' AND UD104A.Character10 = VendorID AND UD104.ShortChar01 = Plant`, Display Fields = `Character01`, `Character02`, `Character03`, `Character04`, `Number01`, `Character06` — **sin agrupar aquí**, el Function Query no está documentado como soporte de `GROUP BY`/agregados como una BAQ, así que trae las filas crudas y agrupa en el paso siguiente.
-   - **Execute Custom Code** (disponible porque activaste "Custom Code Widgets" en la librería, sección 3.1): en C#, agrupa las filas de `cambiosFisicosRaw` por `(Character01, Character02, Character04, Character06)`, sumando `Number01` por grupo, y construye el texto exactamente como el legacy: `$"{Character01}  {Character02}  {Character04}  {suma:0.00}  {Character06}"` por grupo, uniendo los grupos con `" - "` (sin el separador colgante al final que tenía el legacy — usa `string.Join(" - ", lineas)`, no una concatenación con `+=` en el loop). Guarda el resultado final en la variable `commentText`.
-5. **Set Field** sobre `ds.POHeader.CommentText` = `Comentarios + "\r\n\r\nCambios Fisicos:  " + commentText` (si `commentText` está vacío, solo `Comentarios`). Esta construcción única en un solo lugar es la corrección del defecto 10.6: el legacy la asignaba aquí y la volvía a sobrescribir más adelante (paso 9 de esta secuencia, en el original) con el resultado de otro método (`AsignarValoresATextBox`, no revisado) — aquí solo se asigna una vez, en este paso, y no se vuelve a tocar.
-6. **Invoke BO Method** → `Update`, sobre `ds` → el `PONum` resultante queda disponible en `ds.POHeader.PONum`; cópialo a la variable `poNum`.
-7. **Bloque repetido por línea** — configura los siguientes widgets con Execution Rule = **"Per each Row in Table"**, seleccionando la tabla del parámetro `Lineas` (esto reemplaza el `foreach (UltraGridRow R in ...)` del legacy, fila por fila):
-   - **Invoke BO Method** → `GetNewPODetail`, parámetro `poNum` = variable `poNum`, sobre `ds`.
-   - **Invoke BO Method** → `PartStatusValidationMessages`, parámetro `partNum` = `Lineas.PartNum` de la fila actual. **A diferencia del legacy, que llamaba a este método y descartaba su resultado sin revisarlo** (un hallazgo adicional al leer el código real, no listado en los defectos originales del spec: el legacy nunca comprobaba si la parte estaba bloqueada) — agrega una **Condition** que revise el `msgType`/mensaje devuelto, y si indica un bloqueo, una acción **Raise Exception** con ese mensaje, deteniendo todo el workflow (y por transacción, sin dejar la OC a medias).
-   - **Invoke BO Method** → `ChangeDetailPartNum`, parámetro `partNum` = `Lineas.PartNum` de la fila actual.
-   - **Set Field**: `ds.PODetail.PartNum` = `Lineas.PartNum`, `ds.PODetail.PUM` = `Lineas.UOM`, `ds.PODetail.CurrencySwitch` = `false`, `ds.PODetail.RowMod` = `"A"`.
-   - **Invoke BO Method** → `ChangeDetailCalcOurQty`, parámetro `pcCalcOurQty` = `Lineas.Cantidad` de la fila actual.
-   - **Set Field**: `ds.PODetail.CalcOurQty` = `Lineas.Cantidad`.
-   - **Invoke BO Method** → `ChangeUnitPriceConfirmOverride`, luego `ChangeUnitPrice`, sobre `ds`.
-   - **Invoke BO Method** → `Update`, sobre `ds`.
-8. **Set Field**: `ds.POHeader.Approve` = `true`, `ds.POHeader.ApprovalStatus` = `"A"`, `ds.POHeader.Unlock_c` = `true`.
-9. **Invoke BO Method** → `ChangeApproveSwitch`, parámetro `approved` = `true`, sobre `ds`.
-10. **Invoke BO Method** → `Update`, sobre `ds`.
-11. **Set Field**: parámetro de salida `PONum` = variable `poNum`.
-
-### 3.7 — Verificación real (pendiente hasta que se construya)
-
-Una vez publicada, prueba con una orden real de bajo riesgo (o pide que lo haga yo por REST) contra el ambiente de pruebas:
-
-```
-POST /api/v2/efx/CFSJ_LAF/OCA/OCA_CrearOC/
+```csharp
+try
 {
-  "Plant": "LAF",
-  "VendorID": "001008",
-  "BuyerID": "<un BuyerID valido de pruebas>",
-  "Comentarios": "prueba de verificacion",
-  "Lineas": [{ "PartNum": "8310400932", "Cantidad": 1, "Costo": 1, "UOM": "KGS" }]
+    // ===== FASE 1: crear el encabezado SIN aprobar, guardarlo para obtener el PONum real =====
+    // No aprobar aqui todavia: si una linea falla mas adelante, la orden quedaria
+    // aprobada/bloqueada en Epicor y el siguiente intento fallaria con
+    // "is approved, cannot update" (leccion real tomada de una integracion previa
+    // con este mismo patron de llamadas - Portal Proveedores/server/src/services/epicor.ts).
+    Erp.Tablesets.POTableset ds = new Erp.Tablesets.POTableset();
+    this.CallService<Erp.Contracts.POSvcContract>(BO => {
+        BO.GetNewPOHeader(ref ds);
+    });
+
+    this.CallService<Erp.Contracts.POSvcContract>(BO => {
+        BO.ChangeVendor(VendorID, ref ds);
+    });
+
+    var header = ds.POHeader[0];
+    header.BuyerID = BuyerID; // defecto 10.4: siempre el que llega, ya validado por la API antes de llamar aqui
+
+    // Cambios Fisicos pendientes - consulta propia, independiente del BAQ de la interfaz
+    // (Task 2): el comentario debe reflejar el estado en el momento exacto de crear la
+    // orden, no lo que el comprador llego a ver antes. DB Context en vez de SqlConnection
+    // directa (defecto 10.5).
+    var cambiosRaw = this.Db.UD104A
+        .Where(a => a.Character06 == "PENDIENTE" && a.Character10 == VendorID)
+        .Join(this.Db.UD104, a => new { a.Company, a.Key1 }, u => new { u.Company, u.Key1 }, (a, u) => new { a, u })
+        .Where(x => x.u.ShortChar01 == Plant)
+        .Select(x => x.a)
+        .ToList();
+
+    string cambiosTexto = string.Join(" - ", cambiosRaw
+        .GroupBy(a => new { a.Character01, a.Character02, a.Character04, a.Character06 })
+        .Select(g => string.Format("{0}  {1}  {2}  {3:0.00}  {4}",
+            g.Key.Character01, g.Key.Character02, g.Key.Character04,
+            g.Sum(a => a.Number01), g.Key.Character06)));
+
+    // Una sola construccion del comentario, en un solo lugar - corrige el defecto 10.6
+    // (el legacy lo asignaba aqui y lo sobrescribia mas adelante con otro metodo).
+    header.CommentText = string.IsNullOrEmpty(cambiosTexto)
+        ? Comentarios
+        : string.Format("{0}\r\n\r\nCambios Fisicos:  {1}", Comentarios, cambiosTexto);
+
+    header.RowMod = "A";
+
+    this.CallService<Erp.Contracts.POSvcContract>(BO => {
+        BO.Update(ref ds);
+    });
+
+    int poNum = ds.POHeader[0].PONum;
+    if (poNum <= 0)
+    {
+        throw new BLException("Epicor no asigno un numero de orden de compra.");
+    }
+
+    // ===== FASE 2: agregar cada linea, una a la vez, con su propio Update =====
+    Erp.Tablesets.POTableset currentDs = ds;
+    foreach (var linea in Lineas)
+    {
+        Erp.Tablesets.POTableset lineDs = currentDs;
+        this.CallService<Erp.Contracts.POSvcContract>(BO => {
+            BO.GetNewPODetail(ref lineDs, poNum);
+        });
+
+        // La ranura nueva tiene RowMod='A' y PartNum vacio; con fallback al ultimo renglon
+        // (mismo patron confirmado en Portal Proveedores/epicor.ts).
+        var detalle = lineDs.PODetail.FirstOrDefault(d => d.RowMod == "A" && string.IsNullOrEmpty(d.PartNum))
+                      ?? lineDs.PODetail.LastOrDefault();
+        if (detalle == null)
+        {
+            throw new BLException("No se pudo agregar la linea " + linea.PartNum);
+        }
+
+        string partNum = linea.PartNum;
+        string questionString, msgType;
+        bool substitutePartAvail;
+
+        // A diferencia del legacy, que llamaba esto y descartaba el resultado sin revisarlo
+        // (hallazgo nuevo, no listado en los 8 defectos originales del spec), aqui si se
+        // revisa msgType y se detiene la transaccion si indica un bloqueo.
+        this.CallService<Erp.Contracts.POSvcContract>(BO => {
+            BO.PartStatusValidationMessages(ref partNum, out questionString, out substitutePartAvail, out msgType);
+        });
+        if (!string.IsNullOrEmpty(msgType))
+        {
+            throw new BLException(string.Format("La parte {0} no se puede procesar: {1}", linea.PartNum, questionString));
+        }
+
+        Guid sysRow = detalle.SysRowID;
+        bool multipleMatch;
+        this.CallService<Erp.Contracts.POSvcContract>(BO => {
+            BO.ChangeDetailPartNum(ref partNum, sysRow, "", false, out multipleMatch, ref lineDs);
+        });
+
+        detalle = lineDs.PODetail.FirstOrDefault(d => d.RowMod == "A" || d.RowMod == "U");
+        detalle.PartNum = linea.PartNum;
+        detalle.PUM = linea.UOM;
+        detalle.CurrencySwitch = false;
+
+        this.CallService<Erp.Contracts.POSvcContract>(BO => {
+            BO.ChangeDetailCalcOurQty(linea.Cantidad, ref lineDs);
+        });
+
+        detalle = lineDs.PODetail.FirstOrDefault(d => d.PartNum == linea.PartNum && (d.RowMod == "A" || d.RowMod == "U"))
+                  ?? lineDs.PODetail.LastOrDefault();
+        detalle.CalcOurQty = linea.Cantidad;
+
+        // Epicor ignora UnitCost/DocUnitCost puestos directamente - el campo de pantalla
+        // real es DocScrUnitCost/ScrUnitCost. ChangeUnitPrice lee ESE campo y recalcula
+        // UnitCost, DocUnitCost, totales e impuestos por su cuenta (leccion real tomada de
+        // Portal Proveedores/epicor.ts - sin esto, el precio queda en cero silenciosamente).
+        detalle.DocScrUnitCost = linea.Costo;
+        detalle.ScrUnitCost = linea.Costo;
+
+        string confirmMsg;
+        this.CallService<Erp.Contracts.POSvcContract>(BO => {
+            BO.ChangeUnitPriceConfirmOverride(out confirmMsg, ref lineDs);
+        });
+        this.CallService<Erp.Contracts.POSvcContract>(BO => {
+            BO.ChangeUnitPrice(ref lineDs);
+        });
+
+        // Filtra el dataset antes de guardar - Epicor puede devolver renglones de otra
+        // orden dentro del mismo dataset entre llamadas sin estado; si se mandan tal cual
+        // al Update, falla con "is approved, cannot update" sobre la orden equivocada
+        // (mismo hallazgo real de Portal Proveedores/epicor.ts).
+        var safeDs = new Erp.Tablesets.POTableset
+        {
+            POHeader = lineDs.POHeader.Where(h => h.PONum == poNum).ToList(),
+            PODetail = lineDs.PODetail.Where(d => d.PONum == poNum || d.RowMod == "A" || d.RowMod == "U").ToList()
+        };
+
+        this.CallService<Erp.Contracts.POSvcContract>(BO => {
+            BO.Update(ref safeDs);
+        });
+        currentDs = safeDs;
+    }
+
+    // ===== FASE 3: aprobar solo hasta que TODAS las lineas quedaron guardadas =====
+    // Aprobar antes deja la orden bloqueada si una linea posterior falla (ver nota Fase 1).
+    var finalHeader = currentDs.POHeader.FirstOrDefault(h => h.PONum == poNum) ?? currentDs.POHeader[0];
+    finalHeader.Approve = true;
+    finalHeader.ApprovalStatus = "A";
+    finalHeader.Unlock_c = true;
+    finalHeader.RowMod = "U";
+
+    var approveDs = new Erp.Tablesets.POTableset { POHeader = new List<Erp.Tablesets.POHeaderRow> { finalHeader } };
+    string violationMsg;
+    this.CallService<Erp.Contracts.POSvcContract>(BO => {
+        BO.ChangeApproveSwitch(true, out violationMsg, ref approveDs);
+    });
+    this.CallService<Erp.Contracts.POSvcContract>(BO => {
+        BO.Update(ref approveDs);
+    });
+
+    PONum = poNum;
+}
+catch (Exception ex)
+{
+    throw new BLException("Error al crear la orden de compra: " + ex.Message);
 }
 ```
 
-Confirma que: (a) responde 200 con un `PONum` real, (b) la OC creada en Epicor aparece **aprobada**, con el `BuyerID` correcto y el comentario combinado, (c) una línea con un `PartNum` inválido detiene todo sin dejar la OC a medias.
+### 3.5 — Verificación real (parcialmente ya hecha)
+
+**Ya confirmado por REST, llamada por llamada, sin aprobar nada:** `GetNewPOHeader(ds)`, `ChangeVendor(VendID, ds)` (resuelve `VendorNum` correctamente — probado con `001008` → `1676`), `Update(ds)` (asigna `PONum` real — probado, PO **3218** creado sin aprobar), `GetNewPODetail(ds, poNUM)` (nota el casing exacto: `poNUM`, no `poNum`), `PartStatusValidationMessages(valpartnum)` (dataset-independiente, sin `ds`), `ChangeDetailPartNum(NewPartNum, SysRowID, rowType, isSubstitute, ds)`, `ChangeDetailCalcOurQty(newCalcOurQty, ds)`, `ChangeUnitPriceConfirmOverride(ds)`, `ChangeUnitPrice(ds)` (confirmado que actualiza `DocUnitCost` a partir de `DocScrUnitCost`), `ChangeApproveSwitch(ApproveValue, ds)`. Todos los nombres de parámetro reales, no adivinados.
+
+**Falta verificar, una vez que pegues el código:** que compile con `Check Syntax`, y una corrida completa de punta a punta creando una OC real **aprobada** (puedes usar el mismo proveedor `001008`/parte `8310400932` que ya se usó en las pruebas anteriores). Confirma que: (a) `PONum` regresa un número real, (b) la OC en Epicor aparece **aprobada**, con el `BuyerID` correcto y el comentario combinado una sola vez, (c) una línea con un `PartNum` inválido detiene todo con un mensaje claro, sin dejar la OC a medias.
 
 ---
 
@@ -630,7 +743,7 @@ public class PurchaseOrderServiceTests
         new("001008", "prueba", lines.ToList());
 
     [Fact]
-    public async Task CreateAsync_InvokesTheOCA_CrearOCFunction()
+    public async Task CreateAsync_InvokesTheOCACrearOCFunction()
     {
         var client = new StubEpicorClient(new { PONum = 123456 });
         var service = new PurchaseOrderService(client);
@@ -642,8 +755,8 @@ public class PurchaseOrderServiceTests
 
         Assert.Equal(123456, result.PoNum);
         Assert.Equal("CFSJ_LAF", client.LastCompany);
-        Assert.Equal("OCA", client.LastLibrary);
-        Assert.Equal("OCA_CrearOC", client.LastFunction);
+        Assert.Equal("OCACrearOC", client.LastLibrary);
+        Assert.Equal("OCACrearOC", client.LastFunction);
     }
 
     [Fact]
@@ -706,7 +819,7 @@ public sealed record CreatePurchaseOrderRequest(
 
 public sealed record CreatePurchaseOrderResult(int PoNum);
 
-// Shape of the JSON body sent to OCA_CrearOC — property names must match the
+// Shape of the JSON body sent to OCACrearOC — property names must match the
 // Function's input parameter names exactly (Task 3, section 3.2).
 public sealed class PurchaseOrderFunctionInput
 {
@@ -725,7 +838,7 @@ public sealed class PurchaseOrderLineInput
     public string UOM { get; set; } = string.Empty;
 }
 
-// Shape of the JSON response from OCA_CrearOC (Task 3, section 3.3).
+// Shape of the JSON response from OCACrearOC (Task 3, section 3.3).
 public sealed class PurchaseOrderFunctionOutput
 {
     public int PONum { get; set; }
@@ -794,7 +907,7 @@ public sealed class PurchaseOrderService : IPurchaseOrderService
         };
 
         var response = await _epicor.InvokeFunctionAsync<PurchaseOrderFunctionOutput>(
-            company, "OCA", "OCA_CrearOC", input, credentials, ct);
+            company, "OCACrearOC", "OCACrearOC", input, credentials, ct);
 
         if (response is null)
         {
@@ -906,7 +1019,7 @@ public sealed class PurchaseOrdersController : ControllerBase
                 });
             default:
                 // "Other" covers both real infrastructure failures and
-                // OCA_CrearOC's own business-rule rejections (blocked part,
+                // OCACrearOC's own business-rule rejections (blocked part,
                 // invalid line, etc.). The spec requires the buyer see the
                 // actual descriptive error from the Function here, not a
                 // generic message, so the error's own text is passed through.
@@ -939,7 +1052,7 @@ Expected: todos los tests pasan (los de Task 1 + Task 4 + estos 3 nuevos)
 
 ```bash
 git add src/OCAutomatica.Api/PurchaseOrders src/OCAutomatica.Api/Controllers/PurchaseOrdersController.cs src/OCAutomatica.Api/Program.cs tests/OCAutomatica.Api.Tests/PurchaseOrders/PurchaseOrderServiceTests.cs
-git commit -m "feat: add purchase order creation via the OCA_CrearOC Epicor Function"
+git commit -m "feat: add purchase order creation via the OCACrearOC Epicor Function"
 ```
 
 ---
@@ -950,7 +1063,7 @@ git commit -m "feat: add purchase order creation via the OCA_CrearOC Epicor Func
 - Modify: `src/web/src/api/client.ts`
 - Modify: `src/web/src/parts/PartsGrid.tsx`
 
-**Por qué existe esta tarea:** hoy `PartsGrid` (Plan 2) es autocontenido — nadie fuera del componente sabe qué filas están marcadas ni con qué cantidad. Para poder mandar `Lineas` a `OCA_CrearOC` desde un botón "Procesar" que vive en otro componente (Task 7), `PartsGrid` necesita avisar hacia afuera cada vez que sus filas cambian.
+**Por qué existe esta tarea:** hoy `PartsGrid` (Plan 2) es autocontenido — nadie fuera del componente sabe qué filas están marcadas ni con qué cantidad. Para poder mandar `Lineas` a `OCACrearOC` desde un botón "Procesar" que vive en otro componente (Task 7), `PartsGrid` necesita avisar hacia afuera cada vez que sus filas cambian.
 
 **Interfaces:**
 - Produces:
@@ -1273,7 +1386,7 @@ git commit -m "feat: wire purchase order creation into the main app flow"
 - [ ] `dotnet test` pasa completo
 - [ ] `npm run build` en `src/web` compila sin errores
 - [ ] El BAQ `OCA_CambiosFisicos` está publicado y verificado contra Epicor real (Task 2)
-- [ ] La Function `OCA_CrearOC` está publicada, mapeada a la compañía correcta, y verificada contra Epicor real (Task 3) — incluyendo el caso de una línea inválida que detiene todo sin dejar OC parcial
+- [ ] La Function `OCACrearOC` está publicada, mapeada a la compañía correcta, y verificada contra Epicor real (Task 3) — incluyendo el caso de una línea inválida que detiene todo sin dejar OC parcial
 - [ ] Un comprador ve los Cambios Físicos pendientes del proveedor antes de procesar
 - [ ] Al procesar, se crea en Epicor una OC **aprobada** con el `BuyerID` del usuario (criterio de aceptación 5)
 - [ ] Si la creación falla (línea inválida, proveedor bloqueado, etc.), no queda ninguna OC parcial y el comprador ve el mensaje real de Epicor, no uno genérico (criterio de aceptación 6)
