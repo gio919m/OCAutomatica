@@ -441,7 +441,9 @@ Pestaña **Signature**. Entrada (Direction = In):
 | `VendorID` | string | Proveedor seleccionado |
 | `BuyerID` | string | Ya resuelto por la API (Plan 1) — la Function **no** lo calcula, solo lo usa |
 | `Comentarios` | string | Texto libre del comprador — **sin** el bloque de Cambios Físicos, que el código arma por su cuenta |
-| `Lineas` | Tabla (tableset), columnas `PartNum` (string), `Cantidad` (decimal), `Costo` (decimal), `UOM` (string) | Artículos marcados, ya decimales (Plan 2) |
+| `Lineas` | **string** (no tableset) | Artículos marcados, como **texto JSON** — ver la nota abajo sobre por qué |
+
+**Nota sobre `Lineas` — por qué es `string` y no una tabla real:** un parámetro de tipo tabla en una Function debe ser un TableSet ya existente de algún assembly referenciado (se elige con "Select Type" en el dropdown de tipo) — no hay una forma de definir sobre la marcha una tabla nueva con columnas `PartNum`/`Cantidad`/`Costo`/`UOM` sin crear un Business Object o UBAQ solo para esto, lo cual sería mucho más trabajo del que vale la pena aquí. La solución simple: `Lineas` es `System.String`, y el backend (Task 5) manda un **JSON serializado** de la lista de líneas (por ejemplo `[{"PartNum":"8310400932","Cantidad":5.5,"Costo":53.0,"UOM":"KGS"}]`) — dentro del código de la Function se deserializa ese texto (ver sección 3.4). Como ya lo tienes puesto como `System.String`, **no hay que cambiar nada en el Signature** — solo hace falta que la Task 5 lo mande como JSON (ya está diseñado así) y que el código de la Function lo lea como JSON (ver 3.4).
 
 Salida (Direction = Out):
 
@@ -513,9 +515,19 @@ try
     }
 
     // ===== FASE 2: agregar cada linea, una a la vez, con su propio Update =====
+    // Lineas llega como texto JSON, no como tabla: no existe en Epicor un TableSet ya
+    // hecho con las columnas PartNum/Cantidad/Costo/UOM, y crear un Business Object o
+    // UBAQ nuevo solo para esto no vale la pena - se parsea el JSON aqui mismo.
+    var lineasJson = System.Text.Json.JsonDocument.Parse(Lineas).RootElement;
+
     Erp.Tablesets.POTableset currentDs = ds;
-    foreach (var linea in Lineas)
+    foreach (var lineaEl in lineasJson.EnumerateArray())
     {
+        string partNumOriginal = lineaEl.GetProperty("PartNum").GetString();
+        decimal cantidad = lineaEl.GetProperty("Cantidad").GetDecimal();
+        decimal costo = lineaEl.GetProperty("Costo").GetDecimal();
+        string uom = lineaEl.GetProperty("UOM").GetString();
+
         Erp.Tablesets.POTableset lineDs = currentDs;
         this.CallService<Erp.Contracts.POSvcContract>(BO => {
             BO.GetNewPODetail(ref lineDs, poNum);
@@ -527,10 +539,10 @@ try
                       ?? lineDs.PODetail.LastOrDefault();
         if (detalle == null)
         {
-            throw new BLException("No se pudo agregar la linea " + linea.PartNum);
+            throw new BLException("No se pudo agregar la linea " + partNumOriginal);
         }
 
-        string partNum = linea.PartNum;
+        string partNum = partNumOriginal;
         string questionString, msgType;
         bool substitutePartAvail;
 
@@ -542,7 +554,7 @@ try
         });
         if (!string.IsNullOrEmpty(msgType))
         {
-            throw new BLException(string.Format("La parte {0} no se puede procesar: {1}", linea.PartNum, questionString));
+            throw new BLException(string.Format("La parte {0} no se puede procesar: {1}", partNumOriginal, questionString));
         }
 
         Guid sysRow = detalle.SysRowID;
@@ -552,24 +564,24 @@ try
         });
 
         detalle = lineDs.PODetail.FirstOrDefault(d => d.RowMod == "A" || d.RowMod == "U");
-        detalle.PartNum = linea.PartNum;
-        detalle.PUM = linea.UOM;
+        detalle.PartNum = partNumOriginal;
+        detalle.PUM = uom;
         detalle.CurrencySwitch = false;
 
         this.CallService<Erp.Contracts.POSvcContract>(BO => {
-            BO.ChangeDetailCalcOurQty(linea.Cantidad, ref lineDs);
+            BO.ChangeDetailCalcOurQty(cantidad, ref lineDs);
         });
 
-        detalle = lineDs.PODetail.FirstOrDefault(d => d.PartNum == linea.PartNum && (d.RowMod == "A" || d.RowMod == "U"))
+        detalle = lineDs.PODetail.FirstOrDefault(d => d.PartNum == partNumOriginal && (d.RowMod == "A" || d.RowMod == "U"))
                   ?? lineDs.PODetail.LastOrDefault();
-        detalle.CalcOurQty = linea.Cantidad;
+        detalle.CalcOurQty = cantidad;
 
         // Epicor ignora UnitCost/DocUnitCost puestos directamente - el campo de pantalla
         // real es DocScrUnitCost/ScrUnitCost. ChangeUnitPrice lee ESE campo y recalcula
         // UnitCost, DocUnitCost, totales e impuestos por su cuenta (leccion real tomada de
         // Portal Proveedores/epicor.ts - sin esto, el precio queda en cero silenciosamente).
-        detalle.DocScrUnitCost = linea.Costo;
-        detalle.ScrUnitCost = linea.Costo;
+        detalle.DocScrUnitCost = costo;
+        detalle.ScrUnitCost = costo;
 
         string confirmMsg;
         this.CallService<Erp.Contracts.POSvcContract>(BO => {
@@ -701,6 +713,7 @@ Sigue exactamente el patrón de `IPartService`/`PartService`/`PartsController` (
 Crear `tests/OCAutomatica.Api.Tests/PurchaseOrders/PurchaseOrderServiceTests.cs`:
 
 ```csharp
+using System.Text.Json;
 using OCAutomatica.Api.Epicor;
 using OCAutomatica.Api.PurchaseOrders;
 
@@ -774,8 +787,9 @@ public class PurchaseOrderServiceTests
             Creds);
 
         var input = Assert.IsType<PurchaseOrderFunctionInput>(client.LastInput);
-        Assert.Equal(0.5m, input.Lineas[0].Cantidad);
-        Assert.Equal(12.345m, input.Lineas[0].Costo);
+        var lineas = JsonSerializer.Deserialize<List<PurchaseOrderLineInput>>(input.Lineas)!;
+        Assert.Equal(0.5m, lineas[0].Cantidad);
+        Assert.Equal(12.345m, lineas[0].Costo);
     }
 
     [Fact]
@@ -820,14 +834,19 @@ public sealed record CreatePurchaseOrderRequest(
 public sealed record CreatePurchaseOrderResult(int PoNum);
 
 // Shape of the JSON body sent to OCACrearOC — property names must match the
-// Function's input parameter names exactly (Task 3, section 3.2).
+// Function's input parameter names exactly (Task 3, section 3.3).
 public sealed class PurchaseOrderFunctionInput
 {
     public string Plant { get; set; } = string.Empty;
     public string VendorID { get; set; } = string.Empty;
     public string BuyerID { get; set; } = string.Empty;
     public string Comentarios { get; set; } = string.Empty;
-    public List<PurchaseOrderLineInput> Lineas { get; set; } = new();
+
+    // The Function's Lineas parameter is a plain string, not a tableset - there is no
+    // ready-made Epicor TableSet with PartNum/Cantidad/Costo/UOM columns, and building a
+    // Business Object/UBAQ just to get one isn't worth it here. This carries a JSON-serialized
+    // array (built in PurchaseOrderService.CreateAsync), parsed inside the Function's own code.
+    public string Lineas { get; set; } = string.Empty;
 }
 
 public sealed class PurchaseOrderLineInput
@@ -871,6 +890,7 @@ public interface IPurchaseOrderService
 Crear `src/OCAutomatica.Api/PurchaseOrders/PurchaseOrderService.cs`:
 
 ```csharp
+using System.Text.Json;
 using OCAutomatica.Api.Epicor;
 
 namespace OCAutomatica.Api.PurchaseOrders;
@@ -889,21 +909,23 @@ public sealed class PurchaseOrderService : IPurchaseOrderService
         EpicorCredentials credentials,
         CancellationToken ct = default)
     {
+        var lineas = request.Lineas
+            .Select(l => new PurchaseOrderLineInput
+            {
+                PartNum = l.PartNum,
+                Cantidad = l.Cantidad,
+                Costo = l.Costo,
+                UOM = l.Uom
+            })
+            .ToList();
+
         var input = new PurchaseOrderFunctionInput
         {
             Plant = plant,
             VendorID = request.VendorId,
             BuyerID = buyerId,
             Comentarios = request.Comentarios,
-            Lineas = request.Lineas
-                .Select(l => new PurchaseOrderLineInput
-                {
-                    PartNum = l.PartNum,
-                    Cantidad = l.Cantidad,
-                    Costo = l.Costo,
-                    UOM = l.Uom
-                })
-                .ToList()
+            Lineas = JsonSerializer.Serialize(lineas)
         };
 
         var response = await _epicor.InvokeFunctionAsync<PurchaseOrderFunctionOutput>(
