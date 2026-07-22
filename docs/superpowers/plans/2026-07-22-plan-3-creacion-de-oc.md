@@ -498,9 +498,15 @@ try
 
     // Una sola construccion del comentario, en un solo lugar - corrige el defecto 10.6
     // (el legacy lo asignaba aqui y lo sobrescribia mas adelante con otro metodo).
+    // Comentarios puede llegar null (no solo ""): Epicor asigna null a cualquier parametro
+    // de tipo referencia que no se especifique en la llamada (confirmado - error real:
+    // "Cannot insert the value NULL into column 'CommentText'... does not allow nulls" al
+    // dejar Comentarios vacio en el panel de prueba). CommentText en la tabla no acepta
+    // NULL, así que hay que forzar string vacio antes de asignarlo.
+    var comentariosTexto = Comentarios ?? string.Empty;
     header.CommentText = string.IsNullOrEmpty(cambiosTexto)
-        ? Comentarios
-        : string.Format("{0}\r\n\r\nCambios Fisicos:  {1}", Comentarios, cambiosTexto);
+        ? comentariosTexto
+        : string.Format("{0}\r\n\r\nCambios Fisicos:  {1}", comentariosTexto, cambiosTexto);
 
     header.RowMod = "A";
 
