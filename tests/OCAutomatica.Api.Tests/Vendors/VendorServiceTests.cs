@@ -22,6 +22,12 @@ public class VendorServiceTests
         public Task<T?> PostAsync<T>(string company, string relativePath, object body,
             EpicorCredentials credentials, CancellationToken ct = default)
             => Task.FromResult((T?)_response);
+
+        public Task<T?> InvokeFunctionAsync<T>(
+            string company, string library, string function, object input,
+            EpicorCredentials credentials, CancellationToken ct = default)
+            => throw new NotSupportedException(
+                "InvokeFunctionAsync is not exercised by this test suite.");
     }
 
     private static readonly EpicorCredentials Creds = new("jyanez", "x");

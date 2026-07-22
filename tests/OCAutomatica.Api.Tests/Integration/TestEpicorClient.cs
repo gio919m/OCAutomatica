@@ -36,4 +36,10 @@ public sealed class TestEpicorClient : IEpicorClient
         CancellationToken ct = default)
         => throw new NotSupportedException(
             "PostAsync is not exercised by the endpoints covered by these integration tests.");
+
+    public Task<T?> InvokeFunctionAsync<T>(
+        string company, string library, string function, object input,
+        EpicorCredentials credentials, CancellationToken ct = default)
+        => throw new NotSupportedException(
+            "InvokeFunctionAsync is not exercised by the endpoints covered by these integration tests.");
 }

@@ -14,4 +14,12 @@ public interface IEpicorClient
         object body,
         EpicorCredentials credentials,
         CancellationToken ct = default);
+
+    Task<T?> InvokeFunctionAsync<T>(
+        string company,
+        string library,
+        string function,
+        object input,
+        EpicorCredentials credentials,
+        CancellationToken ct = default);
 }

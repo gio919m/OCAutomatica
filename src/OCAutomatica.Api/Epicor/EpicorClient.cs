@@ -52,13 +52,39 @@ public sealed class EpicorClient : IEpicorClient
     {
         var url = $"{_options.BaseUrl}/api/v2/odata/{company}/{relativePath}";
         var request = new HttpRequestMessage(method, url);
+        AddAuthHeaders(request, credentials);
+        return request;
+    }
 
+    private void AddAuthHeaders(HttpRequestMessage request, EpicorCredentials credentials)
+    {
         var token = Convert.ToBase64String(
             Encoding.UTF8.GetBytes($"{credentials.Username}:{credentials.Password}"));
         request.Headers.Authorization = new AuthenticationHeaderValue("Basic", token);
         request.Headers.Add("x-api-key", _options.ApiKey);
+    }
 
-        return request;
+    public Task<T?> InvokeFunctionAsync<T>(
+        string company,
+        string library,
+        string function,
+        object input,
+        EpicorCredentials credentials,
+        CancellationToken ct = default)
+    {
+        // Epicor Functions live under /api/v2/efx/ — a completely separate URL
+        // segment from the OData BO/BAQ surface under /api/v2/odata/ used by
+        // every other method in this class. Confirmed in the Kinetic REST
+        // Services Guide v2's "Invoking Epicor Functions" section.
+        var url = $"{_options.BaseUrl}/api/v2/efx/{company}/{library}/{function}/";
+        var request = new HttpRequestMessage(HttpMethod.Post, url);
+        AddAuthHeaders(request, credentials);
+        // Explicit options: JsonContent.Create's overload without an options
+        // argument falls back to System.Net.Http.Json's Web defaults (camelCase
+        // naming policy), but Epicor Functions expect the input's C# property
+        // names verbatim (PascalCase), matching how the OData BO surface is called.
+        request.Content = JsonContent.Create(input, options: JsonOptions);
+        return SendAsync<T>(request, ct);
     }
 
     private async Task<T?> SendAsync<T>(HttpRequestMessage request, CancellationToken ct)

@@ -148,4 +148,114 @@ public class EpicorClientTests
         Assert.Equal(EpicorErrorReason.Other, ex.Reason);
         Assert.Equal(500, ex.StatusCode);
     }
+
+    private sealed record FunctionOutput(int PONum);
+    private sealed record FunctionInput(string Plant, string VendorID);
+
+    [Fact]
+    public async Task InvokeFunctionAsync_BuildsEfxUrl_NotOdata()
+    {
+        var handler = new FakeHttpMessageHandler(
+            HttpStatusCode.OK, """{"PONum":123456}""");
+        var client = BuildClient(handler);
+
+        await client.InvokeFunctionAsync<FunctionOutput>(
+            "CFSJ_LAF",
+            "OCA",
+            "OCA_CrearOC",
+            new FunctionInput("LAF", "001008"),
+            new EpicorCredentials("user", "pass"));
+
+        Assert.Equal(
+            "https://epicor-test/erp102600v2/api/v2/efx/CFSJ_LAF/OCA/OCA_CrearOC/",
+            handler.LastRequest!.RequestUri!.ToString());
+    }
+
+    [Fact]
+    public async Task InvokeFunctionAsync_UsesPostVerb()
+    {
+        var handler = new FakeHttpMessageHandler(
+            HttpStatusCode.OK, """{"PONum":123456}""");
+        var client = BuildClient(handler);
+
+        await client.InvokeFunctionAsync<FunctionOutput>(
+            "CFSJ_LAF", "OCA", "OCA_CrearOC",
+            new FunctionInput("LAF", "001008"),
+            new EpicorCredentials("user", "pass"));
+
+        Assert.Equal(HttpMethod.Post, handler.LastRequest!.Method);
+    }
+
+    [Fact]
+    public async Task InvokeFunctionAsync_SendsBasicAuthAndApiKey()
+    {
+        var handler = new FakeHttpMessageHandler(
+            HttpStatusCode.OK, """{"PONum":123456}""");
+        var client = BuildClient(handler);
+
+        await client.InvokeFunctionAsync<FunctionOutput>(
+            "CFSJ_LAF", "OCA", "OCA_CrearOC",
+            new FunctionInput("LAF", "001008"),
+            new EpicorCredentials("jyanez", "secreto"));
+
+        var request = handler.LastRequest!;
+        var expectedAuth = Convert.ToBase64String(
+            System.Text.Encoding.UTF8.GetBytes("jyanez:secreto"));
+
+        Assert.Equal("Basic", request.Headers.Authorization!.Scheme);
+        Assert.Equal(expectedAuth, request.Headers.Authorization.Parameter);
+        Assert.Equal("test-api-key", request.Headers.GetValues("x-api-key").Single());
+    }
+
+    [Fact]
+    public async Task InvokeFunctionAsync_SendsInputAsJsonBody()
+    {
+        var handler = new FakeHttpMessageHandler(
+            HttpStatusCode.OK, """{"PONum":123456}""");
+        var client = BuildClient(handler);
+
+        await client.InvokeFunctionAsync<FunctionOutput>(
+            "CFSJ_LAF", "OCA", "OCA_CrearOC",
+            new FunctionInput("LAF", "001008"),
+            new EpicorCredentials("user", "pass"));
+
+        var body = await handler.LastRequest!.Content!.ReadAsStringAsync();
+        Assert.Contains("\"Plant\":\"LAF\"", body);
+        Assert.Contains("\"VendorID\":\"001008\"", body);
+    }
+
+    [Fact]
+    public async Task InvokeFunctionAsync_DeserializesResponse()
+    {
+        var handler = new FakeHttpMessageHandler(
+            HttpStatusCode.OK, """{"PONum":123456}""");
+        var client = BuildClient(handler);
+
+        var result = await client.InvokeFunctionAsync<FunctionOutput>(
+            "CFSJ_LAF", "OCA", "OCA_CrearOC",
+            new FunctionInput("LAF", "001008"),
+            new EpicorCredentials("user", "pass"));
+
+        Assert.NotNull(result);
+        Assert.Equal(123456, result!.PONum);
+    }
+
+    [Fact]
+    public async Task InvokeFunctionAsync_ThrowsEpicorExceptionOnBusinessRuleFailure()
+    {
+        // Same exception shape as BO validation failures (Ice.Common.BusinessObjectException),
+        // confirmed in the REST guide's error-mapping section — Functions reuse it too.
+        var handler = new FakeHttpMessageHandler(HttpStatusCode.BadRequest,
+            """{"HttpStatus":400,"ReasonPhrase":"REST Api Exception","ErrorMessage":"Part is required.","ErrorType":"Ice.Common.BusinessObjectException"}""");
+        var client = BuildClient(handler);
+
+        var ex = await Assert.ThrowsAsync<EpicorException>(() =>
+            client.InvokeFunctionAsync<FunctionOutput>(
+                "CFSJ_LAF", "OCA", "OCA_CrearOC",
+                new FunctionInput("LAF", "001008"),
+                new EpicorCredentials("user", "pass")));
+
+        Assert.Equal(EpicorErrorReason.Other, ex.Reason);
+        Assert.Equal("Part is required.", ex.Message);
+    }
 }
