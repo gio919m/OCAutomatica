@@ -39,6 +39,25 @@ export interface PartRow {
   inTransitQty: number
 }
 
+export interface PurchaseOrderLine {
+  partNum: string
+  cantidad: number
+  costo: number
+  uom: string
+}
+
+export interface CreatePurchaseOrderResult {
+  poNum: number
+}
+
+export interface CambioFisico {
+  character01: string
+  character02: string
+  character04: string
+  cantidadPendiente: number
+  character06: string
+}
+
 export class ApiError extends Error {
   status: number
 
@@ -98,5 +117,18 @@ export const api = {
   parts: {
     byVendor: (vendorId: string) =>
       request<PartRow[]>(`/api/parts?vendorId=${encodeURIComponent(vendorId)}`),
+  },
+
+  cambiosFisicos: {
+    byVendor: (vendorId: string) =>
+      request<CambioFisico[]>(`/api/cambios-fisicos?vendorId=${encodeURIComponent(vendorId)}`),
+  },
+
+  purchaseOrders: {
+    create: (vendorId: string, comentarios: string, lineas: PurchaseOrderLine[]) =>
+      request<CreatePurchaseOrderResult>('/api/purchase-orders', {
+        method: 'POST',
+        body: JSON.stringify({ vendorId, comentarios, lineas }),
+      }),
   },
 }

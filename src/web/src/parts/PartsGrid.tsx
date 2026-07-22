@@ -14,14 +14,15 @@ export interface PartRowState extends PartRow {
 
 interface Props {
   vendorId: string
+  onRowsChange?: (rows: PartRowState[]) => void
 }
 
-function isRowInvalid(row: PartRowState): boolean {
+export function isRowInvalid(row: PartRowState): boolean {
   if (!row.assign) return false
   return row.qtyToFill === null || row.qtyToFill <= 0 || row.cost <= 0
 }
 
-export function PartsGrid({ vendorId }: Props) {
+export function PartsGrid({ vendorId, onRowsChange }: Props) {
   const [rows, setRows] = useState<PartRowState[]>([])
   const [quickFilter, setQuickFilter] = useState('')
   const [loading, setLoading] = useState(true)
@@ -40,6 +41,10 @@ export function PartsGrid({ vendorId }: Props) {
   }, [vendorId])
 
   const selectedCount = useMemo(() => rows.filter((r) => r.assign).length, [rows])
+
+  useEffect(() => {
+    onRowsChange?.(rows)
+  }, [rows, onRowsChange])
 
   function updateRow(partNum: string, patch: Partial<PartRowState>) {
     setRows((prev) =>
