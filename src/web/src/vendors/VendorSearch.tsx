@@ -15,6 +15,7 @@ export function VendorSearch({ onVendorSelected }: Props) {
   useEffect(() => {
     if (query.trim().length < 2 || selected) {
       setResults([])
+      setError(null)
       return
     }
 
