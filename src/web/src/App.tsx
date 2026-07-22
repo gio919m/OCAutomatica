@@ -1,12 +1,15 @@
 import { useState } from 'react'
-import { type Context } from './api/client'
+import { type Context, type Vendor } from './api/client'
 import { LoginPage } from './auth/LoginPage'
 import { ContextPicker } from './auth/ContextPicker'
 import { useSession } from './auth/useSession'
+import { VendorSearch } from './vendors/VendorSearch'
+import { PartsGrid } from './parts/PartsGrid'
 
 export default function App() {
   const { session, setSession, loading, signOut } = useSession()
   const [context, setContext] = useState<Context | null>(null)
+  const [vendor, setVendor] = useState<Vendor | null>(null)
 
   if (loading) return <p>Cargando...</p>
 
@@ -27,7 +30,9 @@ export default function App() {
         </button>
       </header>
 
-      <p>Sesion iniciada. El grid de productos llega en el Plan 2.</p>
+      <VendorSearch onVendorSelected={setVendor} />
+
+      {vendor && <PartsGrid key={vendor.vendorId} vendorId={vendor.vendorId} />}
     </main>
   )
 }
