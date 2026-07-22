@@ -630,11 +630,11 @@ try
 
     // Confirmar que el proveedor acepto los costos - en el flujo de este comprador siempre
     // se da por hecho (hallazgo real, descubierto probando: sin esto la OC queda "Unconfirmed"
-    // aunque ya este aprobada; son dos banderas independientes en Epicor). Mismo patron que
-    // ChangeApproveSwitch, confirmado por REST: ChangeConfirmSwitch(confirmValue, ds).
-    string confirmViolationMsg = null;
+    // aunque ya este aprobada; son dos banderas independientes en Epicor). A diferencia de
+    // ChangeApproveSwitch, este NO tiene mensaje de salida - solo 2 parametros (confirmado
+    // por Check Syntax: "No overload for method 'ChangeConfirmSwitch' takes 3 arguments").
     this.CallService<Erp.Contracts.POSvcContract>(BO => {
-        BO.ChangeConfirmSwitch(true, out confirmViolationMsg, ref currentDs);
+        BO.ChangeConfirmSwitch(true, ref currentDs);
     });
 
     this.CallService<Erp.Contracts.POSvcContract>(BO => {
