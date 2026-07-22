@@ -627,6 +627,16 @@ try
     this.CallService<Erp.Contracts.POSvcContract>(BO => {
         BO.ChangeApproveSwitch(true, out violationMsg, ref currentDs);
     });
+
+    // Confirmar que el proveedor acepto los costos - en el flujo de este comprador siempre
+    // se da por hecho (hallazgo real, descubierto probando: sin esto la OC queda "Unconfirmed"
+    // aunque ya este aprobada; son dos banderas independientes en Epicor). Mismo patron que
+    // ChangeApproveSwitch, confirmado por REST: ChangeConfirmSwitch(confirmValue, ds).
+    string confirmViolationMsg = null;
+    this.CallService<Erp.Contracts.POSvcContract>(BO => {
+        BO.ChangeConfirmSwitch(true, out confirmViolationMsg, ref currentDs);
+    });
+
     this.CallService<Erp.Contracts.POSvcContract>(BO => {
         BO.Update(ref currentDs);
     });
