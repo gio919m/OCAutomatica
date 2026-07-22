@@ -2,6 +2,7 @@ using OCAutomatica.Api.Auth;
 using OCAutomatica.Api.Buyers;
 using OCAutomatica.Api.Epicor;
 using OCAutomatica.Api.Organization;
+using OCAutomatica.Api.Parts;
 using OCAutomatica.Api.Vendors;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -19,6 +20,7 @@ builder.Services.AddSingleton<ISessionStore, SessionStore>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IBuyerService, BuyerService>();
 builder.Services.AddScoped<IOrganizationService, OrganizationService>();
+builder.Services.AddScoped<IPartService, PartService>();
 builder.Services.AddScoped<IVendorService, VendorService>();
 
 var app = builder.Build();
