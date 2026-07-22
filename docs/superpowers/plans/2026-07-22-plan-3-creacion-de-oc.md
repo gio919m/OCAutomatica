@@ -367,7 +367,11 @@ git commit -m "feat: add IEpicorClient.InvokeFunctionAsync for calling Epicor Fu
 
 **Por qué existe esta tarea:** hoy el comprador no ve los Cambios Físicos pendientes hasta que salen impresos en la OC. Este BAQ los muestra en la pantalla *antes* de procesar (spec, sección 6-7). Es un consumidor **distinto e independiente** de la Function del Task 3, que hace su propia consulta al construir el comentario — no dependen entre sí.
 
-### 2.1 — Tabla base, join, filtro y agrupación
+### 2.1 — Cómo entrar (BAQ Designer, igual que en el Plan 2)
+
+Menú de Epicor: **Business Activity Queries > BAQ Designer**. Nuevo BAQ con ID **`OCA_CambiosFisicos`**. El flujo es idéntico al que ya usaste para `OCA_PartesPorProveedor` en el Plan 2 — Query tab para tablas/joins/criteria, Calculated Fields para el agregado, Display Fields para lo que se expone.
+
+### 2.2 — Tabla base, join, filtro y agrupación
 
 - Tabla base: **`UD104A`** (alias `UD104A`).
 - Join: **Inner Join** con **`UD104`** (alias `UD104`) on `UD104A.Company = UD104.Company` AND `UD104A.Key1 = UD104.Key1`.
@@ -375,7 +379,7 @@ git commit -m "feat: add IEpicorClient.InvokeFunctionAsync for calling Epicor Fu
 - Group By: `UD104A.Character01`, `UD104A.Character02`, `UD104A.Character04`, `UD104A.Character06` (el query legacy también agrupa por `Character03` sin mostrarlo — si el BAQ Designer te exige incluirlo en el Group By por estar en la tabla base, agrégalo, pero no lo pongas en Display Fields).
 - Calculated Field (agregado, sin Group By marcado): `Sum(UD104A.Number01)` — alias `CantidadPendiente`.
 
-### 2.2 — Campos a mostrar
+### 2.3 — Campos a mostrar
 
 | Campo | Origen |
 |---|---|
@@ -387,11 +391,11 @@ git commit -m "feat: add IEpicorClient.InvokeFunctionAsync for calling Epicor Fu
 
 No renombres estos campos — el DTO de la Task 4 los usa tal cual, igual que el Plan 2 usó los nombres reales de Epicor sin traducirlos.
 
-### 2.3 — Publicar y dar acceso
+### 2.4 — Publicar y dar acceso
 
 Igual que en el Plan 2: publicar el BAQ, exponerlo por REST, y confirmar que el Access Scope de la API key ya usada lo incluye (probablemente sí, si el scope no es por-BAQ sino general — verificar con una llamada real).
 
-### 2.4 — Verificación real (pendiente hasta que se construya)
+### 2.5 — Verificación real (pendiente hasta que se construya)
 
 Una vez publicado, ejecuta (ajustando el endpoint/parámetros a los reales que resulten):
 
@@ -409,45 +413,90 @@ Reporta el resultado (o pide que lo verifique yo por REST) antes de dar por comp
 
 **Por qué existe esta tarea:** reemplaza `btnProc_Click`, trasladando la secuencia completa de creación de la OC a una sola transacción del lado de Epicor (defecto 10.3), eliminando el `BuyerID` fijo (defecto 10.4, ya resuelto río arriba: la API se lo pasa ya calculado) y la fuga de conexión SQL directa (defecto 10.5: la Function consulta Cambios Físicos con una BO/BAQ interna de Epicor, nunca con una `SqlConnection`).
 
-### 3.1 — Librería y publicación
+### 3.1 — Cómo entrar y crear la librería
 
-Crea (o usa) una librería de Functions, por ejemplo `OCA`, y dentro de ella la Function **`OCA_CrearOC`**. Mapea la librería a la compañía `CFSJ_LAF` en Library Maintenance > Security (Authorized Companies) — **si al probarla por REST recibes 404, este es el primer lugar a revisar**, es el error documentado más común para Functions no mapeadas a la compañía desde la que se llaman.
+Menú de Epicor: **System Management > Business Process Management > Epicor Functions** (Epicor Functions Maintenance). Esto es una herramienta distinta al BAQ Designer que ya conoces del Plan 2 — aquí va el detalle paso a paso porque es la primera vez que se usa en este proyecto.
 
-### 3.2 — Parámetros de entrada
+1. En el campo **Library**, escribe el ID de la librería nueva, por ejemplo `OCA`, y presiona Tab. Cuando te pregunte si quieres crear el registro, **Sí**.
+2. Descripción corta, por ejemplo "OC Automatica - Creacion de ordenes".
+3. En las opciones de la librería, **marca "Custom Code Widgets"** — esto es obligatorio para poder usar la acción "Execute Custom Code" más abajo (sección 3.6). Sin esto marcado, esa acción no aparece disponible.
+4. Guarda la librería.
+5. Ve a la pestaña **Security** de la librería y agrega `CFSJ_LAF` a **Authorized Companies** — **si al probar la Function por REST más adelante recibes 404, este es el primer lugar a revisar**, es el error documentado más común para Functions no mapeadas a la compañía desde la que se llaman.
+
+### 3.2 — Referencias de la librería (Library References)
+
+Antes de poder usar los BOs y las tablas dentro de la Function, hay que declararlos como referencias de la librería (pestaña **References**, dentro de la misma Epicor Functions Maintenance):
+
+- **Services** (tipo Business Object): agrega `Erp.BO.POSvc` — es el BO que expone `GetNewPOHeader`, `ChangeVendor`, `GetNewPODetail`, `PartStatusValidationMessages`, `ChangeDetailPartNum`, `ChangeDetailCalcOurQty`, `ChangeUnitPriceConfirmOverride`, `ChangeUnitPrice`, `ChangeApproveSwitch` y `Update` — todos los métodos que se invocan en la sección 3.6.
+- **Tables**: agrega `UD104A` y `UD104` — se necesitan para la acción "Fill Table By Query" de la sección 3.6, paso 4. Déjalas como solo lectura (no marques "Updatable" — la Function solo las consulta, nunca las modifica).
+
+Estas referencias quedan disponibles para todas las Functions de la librería `OCA`, no solo para `OCA_CrearOC`.
+
+### 3.3 — Crear la Function: tipo "Widget Function with Code"
+
+Dentro de la librería `OCA`: **New > Add Widget Function with Code**. Este tipo (no "Widget Function" simple, ni "Custom Code Function" de código libre) es el que necesitas porque combina las dos cosas que hacen falta aquí:
+
+- Acciones declarativas tipo **Invoke BO Method** — para llamar a cada método de `POSvc` en orden, igual que hacía `POAdapter` en el código legacy, sin tener que escribir el "plumbing" de conexión a mano.
+- El widget **Execute Custom Code** (habilitado gracias a que marcaste "Custom Code Widgets" en el paso 3.1) — para la lógica que no es una simple llamada a BO: agrupar los Cambios Físicos en memoria, armar el texto del comentario, y decidir si detener la transacción cuando una parte está bloqueada.
+
+Nombra la Function **`OCA_CrearOC`**.
+
+### 3.4 — Parámetros de entrada y salida
+
+En la pestaña **Signature**, define estos parámetros de entrada (Direction = In):
 
 | Parámetro | Tipo | Descripción |
 |---|---|---|
 | `Plant` | string | Planta activa de la sesión |
 | `VendorID` | string | Proveedor seleccionado |
 | `BuyerID` | string | Ya resuelto por la API (Plan 1) — la Function **no** lo calcula, solo lo usa |
-| `Comentarios` | string | Texto libre capturado por el comprador — **sin** el bloque de Cambios Físicos, que la Function arma por su cuenta (ver 3.4) |
-| `Lineas` | tabla/lista de: `PartNum` (string), `Cantidad` (decimal), `Costo` (decimal), `UOM` (string) | Artículos marcados, ya validados como decimales por el frontend (Plan 2) |
+| `Comentarios` | string | Texto libre capturado por el comprador — **sin** el bloque de Cambios Físicos, que la Function arma por su cuenta (ver 3.6) |
+| `Lineas` | Tabla (tableset), columnas `PartNum` (string), `Cantidad` (decimal), `Costo` (decimal), `UOM` (string) | Artículos marcados, ya validados como decimales por el frontend (Plan 2) |
 
-### 3.3 — Parámetro de salida
+Y un parámetro de salida (Direction = Out):
 
 | Parámetro | Tipo | Descripción |
 |---|---|---|
 | `PONum` | int | Número de la orden creada |
 
-Cualquier fallo de negocio (parte bloqueada, proveedor inválido, etc.) debe **detener la ejecución con un mensaje descriptivo** (acción "Raise Exception" del Function Designer, o una excepción de C# si usas código custom) — nunca devolver `PONum = 0` silenciosamente. Esto es lo que hace que el backend (Task 5) reciba un `EpicorException` con el mensaje real, en vez de un éxito falso.
+Cualquier fallo de negocio (parte bloqueada, proveedor inválido, etc.) debe **detener la ejecución con un mensaje descriptivo** — usando la acción **Raise Exception** del Function Designer — nunca devolver `PONum = 0` silenciosamente. Esto es lo que hace que el backend (Task 5) reciba un `EpicorException` con el mensaje real, en vez de un éxito falso.
 
-### 3.4 — Secuencia (una sola transacción)
+### 3.5 — Variables de la Function
 
-Traducción directa de `btnProc_Click`, con las correcciones ya incorporadas:
+En la pestaña **Variables**, crea (los vas a necesitar para pasar datos entre los widgets del workflow):
 
-1. `GetNewPOHeader` sobre `Erp.BO.POSvc` (o el BO equivalente), asignar `BuyerID` = parámetro recibido (**no** un valor fijo — defecto 10.4; a diferencia del legacy, que solo lo asignaba si venía vacío, aquí siempre se asigna el que llega, porque la API ya garantiza que sea válido antes de llamar a la Function — ver Task 5).
-2. `ChangeVendor(VendorID)`.
-3. **Consultar Cambios Físicos pendientes, aquí mismo, dentro de la Function** — no reutilices el resultado del BAQ de la interfaz (Task 2), por diseño: el comentario debe reflejar el estado en el momento exacto de crear la orden. Traducción del query legacy (ver la sección "Query real de Cambios Físicos" al inicio del plan) usando las herramientas del Function Designer en vez de una `SqlConnection` directa (defecto 10.5):
-   - Usa una acción **Fill Table By Query** para traer a una tabla en memoria las filas de `UD104A` (join a `UD104` por `Company`+`Key1`) filtradas por `Character06 = 'PENDIENTE'`, `Character10 = VendorID`, `UD104.ShortChar01 = Plant` — **sin agrupar en la query** (el Function Query, a diferencia de una BAQ, no confirmé que soporte `GROUP BY`/agregados — trae las filas crudas).
-   - En un bloque de código (Widget Function with Code), agrupa esas filas en memoria por `(Character01, Character02, Character04, Character06)`, sumando `Number01` por grupo, y construye el texto exactamente como el legacy: `$"{Character01}  {Character02}  {Character04}  {suma:0.00}  {Character06}"` por grupo, uniendo los grupos con `" - "` (sin el separador colgante al final que tenía el legacy — usa `string.Join(" - ", lineas)`, no una concatenación con `+=` en el loop).
-4. Construir `CommentText` combinando **una sola vez** el parámetro `Comentarios` con el texto de Cambios Físicos armado en el paso 3 (si hay alguno) — `Comentarios + "\r\n\r\nCambios Fisicos:  " + textoConcatenado`. Esta construcción única en un solo lugar es la corrección del defecto 10.6: el legacy la asignaba aquí y la volvía a sobrescribir más adelante (paso 7) con el resultado de otro método (`AsignarValoresATextBox`, no revisado) — aquí solo se asigna una vez, en este paso, y no se vuelve a tocar.
-5. `Update` sobre el header → obtener `PONum`.
-6. Por cada elemento de `Lineas`: `GetNewPODetail`, `PartStatusValidationMessages` — **a diferencia del legacy, que llamaba a este método y descartaba su resultado sin revisarlo** (un hallazgo adicional al leer el código real, no listado en los defectos originales del spec: el legacy nunca comprobaba si la parte estaba bloqueada), aquí sí revisa `msgType`/el mensaje devuelto y detén todo con Raise Exception si indica un bloqueo — luego `ChangeDetailPartNum`, asignar `PartNum`/`PUM`/`CurrencySwitch=false`/`RowMod="A"`, `ChangeDetailCalcOurQty`, asignar `CalcOurQty`, `ChangeUnitPriceConfirmOverride`, `ChangeUnitPrice`, `Update`.
-7. Asignar `Approve = true`, `ApprovalStatus = "A"`, `Unlock_c = true`.
-8. `ChangeApproveSwitch(true)`, `Update`.
-9. Salida: `PONum` obtenido en el paso 5.
+- `ds` (tableset del `POSvc` — normalmente se crea automáticamente al configurar el primer `Invoke BO Method` contra `GetNewPOHeader`, mapeando su parámetro de dataset a una variable de este tipo).
+- `cambiosFisicosRaw` (tableset, resultado de la acción Fill Table By Query de la sección 3.6, paso 3).
+- `commentText` (string) — para armar el comentario una sola vez, antes de asignarlo al header.
+- `poNum` (int) — mapeado como salida de `GetNewPOHeader`/`Update` y luego copiado al parámetro de salida `PONum`.
 
-### 3.5 — Verificación real (pendiente hasta que se construya)
+### 3.6 — Secuencia del workflow (una sola transacción)
+
+Traducción directa de `btnProc_Click`, widget por widget, con las correcciones ya incorporadas. Cada número es un elemento que arrastras al área de diseño del Function Designer, en este orden:
+
+1. **Invoke BO Method** → `Erp.BO.POSvc.GetNewPOHeader`. Mapea su dataset de salida a la variable `ds`.
+2. **Set Field** sobre `ds.POHeader.BuyerID` = parámetro `BuyerID` (**no** un valor fijo — defecto 10.4; a diferencia del legacy, que solo lo asignaba si venía vacío, aquí siempre se asigna el que llega, porque la API ya garantiza que sea válido antes de llamar a la Function — ver Task 5).
+3. **Invoke BO Method** → `ChangeVendor`, parámetro `vendorID` = `VendorID`, sobre `ds`.
+4. **Consultar Cambios Físicos pendientes, aquí mismo, dentro de la Function** — no reutilices el resultado del BAQ de la interfaz (Task 2), por diseño: el comentario debe reflejar el estado en el momento exacto de crear la orden. Traducción del query legacy (ver la sección "Query real de Cambios Físicos" al inicio del plan) usando las herramientas del Function Designer en vez de una `SqlConnection` directa (defecto 10.5):
+   - **Fill Table By Query**, target = variable `cambiosFisicosRaw`. Diseña la query (botón "Designed") contra las tablas de referencia `UD104A`/`UD104` (sección 3.2): join `UD104A.Company = UD104.Company AND UD104A.Key1 = UD104.Key1`, criteria `UD104A.Character06 = 'PENDIENTE' AND UD104A.Character10 = VendorID AND UD104.ShortChar01 = Plant`, Display Fields = `Character01`, `Character02`, `Character03`, `Character04`, `Number01`, `Character06` — **sin agrupar aquí**, el Function Query no está documentado como soporte de `GROUP BY`/agregados como una BAQ, así que trae las filas crudas y agrupa en el paso siguiente.
+   - **Execute Custom Code** (disponible porque activaste "Custom Code Widgets" en la librería, sección 3.1): en C#, agrupa las filas de `cambiosFisicosRaw` por `(Character01, Character02, Character04, Character06)`, sumando `Number01` por grupo, y construye el texto exactamente como el legacy: `$"{Character01}  {Character02}  {Character04}  {suma:0.00}  {Character06}"` por grupo, uniendo los grupos con `" - "` (sin el separador colgante al final que tenía el legacy — usa `string.Join(" - ", lineas)`, no una concatenación con `+=` en el loop). Guarda el resultado final en la variable `commentText`.
+5. **Set Field** sobre `ds.POHeader.CommentText` = `Comentarios + "\r\n\r\nCambios Fisicos:  " + commentText` (si `commentText` está vacío, solo `Comentarios`). Esta construcción única en un solo lugar es la corrección del defecto 10.6: el legacy la asignaba aquí y la volvía a sobrescribir más adelante (paso 9 de esta secuencia, en el original) con el resultado de otro método (`AsignarValoresATextBox`, no revisado) — aquí solo se asigna una vez, en este paso, y no se vuelve a tocar.
+6. **Invoke BO Method** → `Update`, sobre `ds` → el `PONum` resultante queda disponible en `ds.POHeader.PONum`; cópialo a la variable `poNum`.
+7. **Bloque repetido por línea** — configura los siguientes widgets con Execution Rule = **"Per each Row in Table"**, seleccionando la tabla del parámetro `Lineas` (esto reemplaza el `foreach (UltraGridRow R in ...)` del legacy, fila por fila):
+   - **Invoke BO Method** → `GetNewPODetail`, parámetro `poNum` = variable `poNum`, sobre `ds`.
+   - **Invoke BO Method** → `PartStatusValidationMessages`, parámetro `partNum` = `Lineas.PartNum` de la fila actual. **A diferencia del legacy, que llamaba a este método y descartaba su resultado sin revisarlo** (un hallazgo adicional al leer el código real, no listado en los defectos originales del spec: el legacy nunca comprobaba si la parte estaba bloqueada) — agrega una **Condition** que revise el `msgType`/mensaje devuelto, y si indica un bloqueo, una acción **Raise Exception** con ese mensaje, deteniendo todo el workflow (y por transacción, sin dejar la OC a medias).
+   - **Invoke BO Method** → `ChangeDetailPartNum`, parámetro `partNum` = `Lineas.PartNum` de la fila actual.
+   - **Set Field**: `ds.PODetail.PartNum` = `Lineas.PartNum`, `ds.PODetail.PUM` = `Lineas.UOM`, `ds.PODetail.CurrencySwitch` = `false`, `ds.PODetail.RowMod` = `"A"`.
+   - **Invoke BO Method** → `ChangeDetailCalcOurQty`, parámetro `pcCalcOurQty` = `Lineas.Cantidad` de la fila actual.
+   - **Set Field**: `ds.PODetail.CalcOurQty` = `Lineas.Cantidad`.
+   - **Invoke BO Method** → `ChangeUnitPriceConfirmOverride`, luego `ChangeUnitPrice`, sobre `ds`.
+   - **Invoke BO Method** → `Update`, sobre `ds`.
+8. **Set Field**: `ds.POHeader.Approve` = `true`, `ds.POHeader.ApprovalStatus` = `"A"`, `ds.POHeader.Unlock_c` = `true`.
+9. **Invoke BO Method** → `ChangeApproveSwitch`, parámetro `approved` = `true`, sobre `ds`.
+10. **Invoke BO Method** → `Update`, sobre `ds`.
+11. **Set Field**: parámetro de salida `PONum` = variable `poNum`.
+
+### 3.7 — Verificación real (pendiente hasta que se construya)
 
 Una vez publicada, prueba con una orden real de bajo riesgo (o pide que lo haga yo por REST) contra el ambiente de pruebas:
 
