@@ -19,6 +19,26 @@ export interface Context {
   canCreateOrders: boolean
 }
 
+export interface Vendor {
+  vendorId: string
+  name: string
+}
+
+export interface PartRow {
+  vendorId: string
+  vendorName: string
+  partNum: string
+  partDescription: string
+  uom: string
+  minimumQty: number
+  maximumQty: number
+  cost: number
+  ean13: string
+  ean14: string
+  onHandQty: number
+  inTransitQty: number
+}
+
 export class ApiError extends Error {
   status: number
 
@@ -69,4 +89,14 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ plant }),
     }),
+
+  vendors: {
+    search: (query: string) =>
+      request<Vendor[]>(`/api/vendors?search=${encodeURIComponent(query)}`),
+  },
+
+  parts: {
+    byVendor: (vendorId: string) =>
+      request<PartRow[]>(`/api/parts?vendorId=${encodeURIComponent(vendorId)}`),
+  },
 }
