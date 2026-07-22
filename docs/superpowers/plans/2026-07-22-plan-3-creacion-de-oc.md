@@ -543,8 +543,15 @@ try
         }
 
         string partNum = partNumOriginal;
-        string questionString, msgType;
-        bool substitutePartAvail;
+        // Los out-parameters deben inicializarse ANTES de la llamada, no solo declararse:
+        // dentro de la lambda de this.CallService, el analizador de asignacion definitiva
+        // de C# no ve la asignacion por 'out' como garantizada fuera de la lambda (aunque en
+        // ejecucion si lo esta) - sin este valor inicial, el compilador marca CS0165
+        // "uso de variable local sin asignar" al leerlas despues (error real, confirmado
+        // con Check Syntax).
+        string questionString = null;
+        string msgType = null;
+        bool substitutePartAvail = false;
 
         // A diferencia del legacy, que llamaba esto y descartaba el resultado sin revisarlo
         // (hallazgo nuevo, no listado en los 8 defectos originales del spec), aqui si se
@@ -558,7 +565,7 @@ try
         }
 
         Guid sysRow = detalle.SysRowID;
-        bool multipleMatch;
+        bool multipleMatch = false;
         this.CallService<Erp.Contracts.POSvcContract>(BO => {
             BO.ChangeDetailPartNum(ref partNum, sysRow, "", false, out multipleMatch, ref lineDs);
         });
@@ -583,28 +590,21 @@ try
         detalle.DocScrUnitCost = costo;
         detalle.ScrUnitCost = costo;
 
-        string confirmMsg;
+        // Orden real de parametros confirmado por Check Syntax: 'ds' (ref) va PRIMERO,
+        // el mensaje de confirmacion (out) va SEGUNDO - al reves de como se habia escrito
+        // antes de probarlo.
+        string confirmMsg = null;
         this.CallService<Erp.Contracts.POSvcContract>(BO => {
-            BO.ChangeUnitPriceConfirmOverride(out confirmMsg, ref lineDs);
+            BO.ChangeUnitPriceConfirmOverride(ref lineDs, out confirmMsg);
         });
         this.CallService<Erp.Contracts.POSvcContract>(BO => {
             BO.ChangeUnitPrice(ref lineDs);
         });
 
-        // Filtra el dataset antes de guardar - Epicor puede devolver renglones de otra
-        // orden dentro del mismo dataset entre llamadas sin estado; si se mandan tal cual
-        // al Update, falla con "is approved, cannot update" sobre la orden equivocada
-        // (mismo hallazgo real de Portal Proveedores/epicor.ts).
-        var safeDs = new Erp.Tablesets.POTableset
-        {
-            POHeader = lineDs.POHeader.Where(h => h.PONum == poNum).ToList(),
-            PODetail = lineDs.PODetail.Where(d => d.PONum == poNum || d.RowMod == "A" || d.RowMod == "U").ToList()
-        };
-
         this.CallService<Erp.Contracts.POSvcContract>(BO => {
-            BO.Update(ref safeDs);
+            BO.Update(ref lineDs);
         });
-        currentDs = safeDs;
+        currentDs = lineDs;
     }
 
     // ===== FASE 3: aprobar solo hasta que TODAS las lineas quedaron guardadas =====
@@ -612,16 +612,17 @@ try
     var finalHeader = currentDs.POHeader.FirstOrDefault(h => h.PONum == poNum) ?? currentDs.POHeader[0];
     finalHeader.Approve = true;
     finalHeader.ApprovalStatus = "A";
-    finalHeader.Unlock_c = true;
     finalHeader.RowMod = "U";
+    // Unlock_c del legacy no existe como propiedad en este POHeaderRow (confirmado con
+    // Check Syntax: CS1061) - se omite; Approve/ApprovalStatus ya expresan la misma
+    // intencion de orden aprobada.
 
-    var approveDs = new Erp.Tablesets.POTableset { POHeader = new List<Erp.Tablesets.POHeaderRow> { finalHeader } };
-    string violationMsg;
+    string violationMsg = null;
     this.CallService<Erp.Contracts.POSvcContract>(BO => {
-        BO.ChangeApproveSwitch(true, out violationMsg, ref approveDs);
+        BO.ChangeApproveSwitch(true, out violationMsg, ref currentDs);
     });
     this.CallService<Erp.Contracts.POSvcContract>(BO => {
-        BO.Update(ref approveDs);
+        BO.Update(ref currentDs);
     });
 
     PONum = poNum;
@@ -636,7 +637,13 @@ catch (Exception ex)
 
 **Ya confirmado por REST, llamada por llamada, sin aprobar nada:** `GetNewPOHeader(ds)`, `ChangeVendor(VendID, ds)` (resuelve `VendorNum` correctamente — probado con `001008` → `1676`), `Update(ds)` (asigna `PONum` real — probado, PO **3218** creado sin aprobar), `GetNewPODetail(ds, poNUM)` (nota el casing exacto: `poNUM`, no `poNum`), `PartStatusValidationMessages(valpartnum)` (dataset-independiente, sin `ds`), `ChangeDetailPartNum(NewPartNum, SysRowID, rowType, isSubstitute, ds)`, `ChangeDetailCalcOurQty(newCalcOurQty, ds)`, `ChangeUnitPriceConfirmOverride(ds)`, `ChangeUnitPrice(ds)` (confirmado que actualiza `DocUnitCost` a partir de `DocScrUnitCost`), `ChangeApproveSwitch(ApproveValue, ds)`. Todos los nombres de parámetro reales, no adivinados.
 
-**Falta verificar, una vez que pegues el código:** que compile con `Check Syntax`, y una corrida completa de punta a punta creando una OC real **aprobada** (puedes usar el mismo proveedor `001008`/parte `8310400932` que ya se usó en las pruebas anteriores). Confirma que: (a) `PONum` regresa un número real, (b) la OC en Epicor aparece **aprobada**, con el `BuyerID` correcto y el comentario combinado una sola vez, (c) una línea con un `PartNum` inválido detiene todo con un mensaje claro, sin dejar la OC a medias.
+**Ya confirmado con `Check Syntax` (primera corrida real, con errores ya corregidos en el código de arriba):**
+- `ChangeUnitPriceConfirmOverride` recibe el `ds` (`ref`) **primero** y el mensaje de confirmación (`out`) **segundo** — al revés de mi primer borrador.
+- `POTableset.POHeader`/`.PODetail` son de **solo lectura** — no se puede construir un `POTableset` nuevo con `{ POHeader = ..., PODetail = ... }` como haría el código de referencia en TypeScript; hay que seguir mutando el mismo dataset que ya trae la llamada anterior. Por esto se quitó el filtrado `safeDs` que tenía el borrador original (además, `PODetailRow` no expone `PONum` como propiedad, así que ese filtro tampoco hubiera compilado).
+- `Unlock_c` **no existe** como propiedad de `POHeaderRow` en este ambiente — se quitó esa línea.
+- Cualquier variable `out` usada dentro de una lambda de `this.CallService` debe **inicializarse antes** de la llamada (`= null`/`= false`), no solo declararse — si no, el compilador marca `CS0165` al leerla después, aunque en ejecución sí quede asignada.
+
+**Falta verificar:** correr `Check Syntax` de nuevo con el código ya corregido arriba (no debería quedar ningún error), y una corrida completa de punta a punta creando una OC real **aprobada** (puedes usar el mismo proveedor `001008`/parte `8310400932` que ya se usó en las pruebas anteriores). Confirma que: (a) `PONum` regresa un número real, (b) la OC en Epicor aparece **aprobada**, con el `BuyerID` correcto y el comentario combinado una sola vez, (c) una línea con un `PartNum` inválido detiene todo con un mensaje claro, sin dejar la OC a medias.
 
 ---
 
