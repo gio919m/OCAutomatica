@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api, type CambioFisico } from '../api/client'
 import { isRowInvalid, type PartRowState } from '../parts/PartsGrid'
 
@@ -14,15 +14,22 @@ export function PurchaseOrderPanel({ vendorId, rows, canCreateOrders }: Props) {
   const [submitting, setSubmitting] = useState(false)
   const [poNum, setPoNum] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const latestVendorIdRef = useRef(vendorId)
 
   useEffect(() => {
+    latestVendorIdRef.current = vendorId
     setCambiosFisicos([])
+    setComentarios('')
     setPoNum(null)
     setError(null)
     api.cambiosFisicos
       .byVendor(vendorId)
-      .then(setCambiosFisicos)
-      .catch(() => setCambiosFisicos([]))
+      .then((data) => {
+        if (latestVendorIdRef.current === vendorId) setCambiosFisicos(data)
+      })
+      .catch(() => {
+        if (latestVendorIdRef.current === vendorId) setCambiosFisicos([])
+      })
   }, [vendorId])
 
   const selectedLines = rows.filter((r) => r.assign && !isRowInvalid(r))
@@ -31,8 +38,10 @@ export function PurchaseOrderPanel({ vendorId, rows, canCreateOrders }: Props) {
     canCreateOrders && selectedLines.length > 0 && !hasInvalidSelection && !submitting
 
   async function handleProcesar() {
+    const submittedVendorId = vendorId
     setSubmitting(true)
     setError(null)
+    setPoNum(null)
     try {
       const lineas = selectedLines.map((r) => ({
         partNum: r.partNum,
@@ -41,9 +50,11 @@ export function PurchaseOrderPanel({ vendorId, rows, canCreateOrders }: Props) {
         uom: r.uom,
       }))
       const result = await api.purchaseOrders.create(vendorId, comentarios, lineas)
-      setPoNum(result.poNum)
+      if (latestVendorIdRef.current === submittedVendorId) setPoNum(result.poNum)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'No se pudo crear la orden de compra.')
+      if (latestVendorIdRef.current === submittedVendorId) {
+        setError(err instanceof Error ? err.message : 'No se pudo crear la orden de compra.')
+      }
     } finally {
       setSubmitting(false)
     }
