@@ -524,19 +524,28 @@ Confirma que: (a) responde 200 con un `PONum` real, (b) la OC creada en Epicor a
 - Modify: `src/OCAutomatica.Api/Program.cs`
 - Test: `tests/OCAutomatica.Api.Tests/PurchaseOrders/CambiosFisicosServiceTests.cs`
 
-**Precondición:** la Task 2 debe estar publicada y verificada por REST — usa aquí los nombres reales de endpoint/parámetros/campos que resulten de esa verificación, no los de este borrador si difieren (mismo patrón que el Plan 2 con la BAQ `OCA_PartesPorProveedor`).
+**Precondición cumplida:** la Task 2 ya está publicada y verificada por REST. Resultado real (`ctx_execute` contra `CFSJ_LAF`, endpoint `BaqSvc/OCA_CambiosFisicos/Data?CurrentPlant=LAF&vendorId=001008` → HTTP 200, forma correcta; no se encontró un proveedor con filas `PENDIENTE` reales en el ambiente de pruebas para confirmar el agregado con datos positivos, pero la estructura del BAQ coincide campo por campo con el query legacy). **Los nombres reales de campo llevan el prefijo de tabla/calculated, igual que en el Plan 2** — no son los nombres limpios que asumía el borrador original de esta sección:
+
+| Campo origen | Nombre real en la respuesta REST |
+|---|---|
+| `UD104A.Character01` | `UD104A_Character01` |
+| `UD104A.Character02` | `UD104A_Character02` |
+| `UD104A.Character04` | `UD104A_Character04` |
+| `Sum(UD104A.Number01)` | `Calculated_CantidadPendiente` |
+| `UD104A.Character06` | `UD104A_Character06` |
 
 **Interfaces:**
 - Consumes: `IEpicorClient.GetAsync<T>`, `EpicorCredentials`, `EpicorException`, `ISessionStore`, `UserSession`, `SessionMiddleware.ItemKey`
 - Produces:
-  - `record CambioFisico(string Character01, string Character02, string Character04, decimal CantidadPendiente, string Character06)` — campos crudos del BAQ, sin nombres inventados: el legacy nunca les da significado semántico, solo los concatena para mostrarlos (ver "Query real de Cambios Físicos" al inicio del plan)
+  - `record CambioFisico(string Character01, string Character02, string Character04, decimal CantidadPendiente, string Character06)` — el modelo de dominio, limpio, expuesto al frontend — campos crudos del BAQ sin nombres inventados: el legacy nunca les da significado semántico, solo los concatena para mostrarlos (ver "Query real de Cambios Físicos" al inicio del plan)
+  - Un DTO interno de deserialización (`CambioFisicoDto`, siguiendo el mismo patrón que `PartDto` del Plan 2) con las 5 propiedades reales de la tabla — `UD104A_Character01`, `UD104A_Character02`, `UD104A_Character04`, `Calculated_CantidadPendiente`, `UD104A_Character06` — que el servicio mapea 1:1 a `CambioFisico` (sin renombrar el significado, solo quitando el prefijo de transporte)
   - `interface ICambiosFisicosService { Task<IReadOnlyList<CambioFisico>> GetPendingAsync(string company, string plant, string vendorId, EpicorCredentials credentials, CancellationToken ct = default) }`
   - `GET /api/cambios-fisicos?vendorId={id}` → `CambioFisico[]`
 
-Sigue exactamente el patrón de `IPartService`/`PartService`/`PartsController` (Plan 2, Task 3) — mismo tipo de servicio BAQ-backed, mismo manejo de sesión/errores, mapeando el DTO 1:1 sin renombrar campos (igual que `PartDto`). Escribe:
+Sigue exactamente el patrón de `IPartService`/`PartService`/`PartsController` (Plan 2, Task 3) — mismo tipo de servicio BAQ-backed, mismo manejo de sesión/errores. Escribe:
 
-1. Tests (`GetPendingAsync_MapsEpicorResponse`, `GetPendingAsync_ReturnsEmptyWhenNoResponse`, `GetPendingAsync_PassesPlantAndVendorAsBaqParameters`) usando el mismo `StubEpicorClient` inline que ya usan `VendorServiceTests`/`PartServiceTests` (con el stub de `InvokeFunctionAsync` del Task 1 agregado).
-2. `ICambiosFisicosService`/`CambiosFisicosService` — `Uri.EscapeDataString` en `plant`/`vendorId`, endpoint `BaqSvc/OCA_CambiosFisicos/Data` (o el que confirme el Task 2).
+1. Tests (`GetPendingAsync_MapsEpicorResponse`, `GetPendingAsync_ReturnsEmptyWhenNoResponse`, `GetPendingAsync_PassesPlantAndVendorAsBaqParameters`) usando el mismo `StubEpicorClient` inline que ya usan `VendorServiceTests`/`PartServiceTests` (con el stub de `InvokeFunctionAsync` del Task 1 agregado). El fixture de `GetPendingAsync_MapsEpicorResponse` debe construir el DTO con los 5 nombres reales de la tabla anterior, no con nombres limpios.
+2. `ICambiosFisicosService`/`CambiosFisicosService` — `Uri.EscapeDataString` en `plant`/`vendorId`, endpoint `BaqSvc/OCA_CambiosFisicos/Data`, parámetros `CurrentPlant`/`vendorId` (confirmados reales, sin `CurrentCompany`).
 3. `CambiosFisicosController` — mismo esqueleto que `PartsController`/`VendorsController`: sesión → credenciales → `try/catch (EpicorException)` → `HandleEpicorException` con mensajes en español ("Tu usuario de Epicor no tiene permiso para consultar Cambios Fisicos...", etc.). Si `vendorId` viene vacío, `Ok(Array.Empty<CambioFisico>())` (no es un error, simplemente no hay proveedor seleccionado aún).
 4. Registrar `ICambiosFisicosService` en `Program.cs`.
 5. Commit.
