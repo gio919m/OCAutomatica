@@ -72,7 +72,7 @@ tests/OCAutomatica.Api.Tests/
 
 **Este es un paso manual en Epicor, no una tarea de código.** No la despaches a un subagente implementador — requiere acceso al BAQ Designer de Kinetic, que ningún subagente tiene.
 
-**Estado: mayormente completo.** El BAQ ya fue construido, publicado y verificado por REST contra datos reales (secciones 1.4, 1.5 y 1.7 ya están actualizadas con los hallazgos reales, no con el diseño original). **Solo falta un pendiente bloqueante:** agregar los campos calculados `Inventario` y `CantidadEnTransito` a los Displayed Fields — ver sección 1.5. En cuanto se agreguen, el controller vuelve a verificar por REST y la Task 1 queda cerrada.
+**Estado: completo.** El BAQ ya fue construido, publicado y verificado por REST contra datos reales (secciones 1.4, 1.5 y 1.7 ya están actualizadas con los hallazgos reales, no con el diseño original), incluyendo los dos campos calculados `Inventario`/`CantidadEnTransito` — ya presentes en la respuesta REST real, aunque con el nombre `Calculated_Inventario`/`Calculated_CantidadEnTransito` (ver 1.5).
 
 **Por qué existe esta tarea:** el grid necesita reemplazar el SQL directo que hoy vive en `GetDataIntoDT` (la customización C# original) por un BAQ expuesto vía REST v2 — así lo definimos en la sección 6 del spec de diseño.
 
@@ -146,7 +146,14 @@ El código de la Task 3 ya usa estos dos nombres reales (`CurrentPlant`, `vendor
 
 No hace falta renombrarlos — el DTO de la Task 3 ya usa estos nombres reales tal cual. También aparece siempre un campo `RowIdent` (Guid) que Epicor agrega automáticamente a todo BAQ; no se usa en el DTO.
 
-**PENDIENTE — bloqueante para que el grid muestre inventario y tránsito:** los campos calculados `Inventario` (`IsNull(SubQuery2.Calculated_TotalBin, 0)`) y `CantidadEnTransito` (`IsNull(SubQuery3.Calculated_xOrden, 0)`) siguen sin existir en el BAQ — las subconsultas están bien construidas pero sus resultados nunca se agregaron a los campos mostrados. **Agrégalos antes de que la Task 3 se de por completa.** Como son campos calculados (no ligados a una tabla), Epicor no les antepone ningún alias — deberían salir exactamente como `Inventario` y `CantidadEnTransito`, sin prefijo. El controller volverá a verificar esto por REST en cuanto avises que los agregaste.
+**YA AGREGADO Y VERIFICADO:** los campos calculados `Inventario` y `CantidadEnTransito` ya se agregaron a los Displayed Fields y se confirmaron por REST contra el proveedor `001008` (47 renglones: 32 con `Inventario` distinto de cero, 21 con `CantidadEnTransito` distinto de cero — ambos como `number`, nunca `null`). **A diferencia de lo esperado, Epicor sí les antepuso un prefijo**, porque no son calculated fields "libres" sino resultados de subconsultas expuestos como calculated field del query principal — Epicor los nombra con el prefijo genérico `Calculated_`, no con el nombre de ninguna tabla:
+
+| Campo calculado | Nombre real en la respuesta REST |
+|---|---|
+| `Inventario` | `Calculated_Inventario` |
+| `CantidadEnTransito` | `Calculated_CantidadEnTransito` |
+
+El DTO de la Task 3 ya usa estos dos nombres reales (`Calculated_Inventario`, `Calculated_CantidadEnTransito`).
 
 ### 1.6 — Publicar y dar acceso
 
@@ -160,12 +167,26 @@ Endpoint real (nota el sub-recurso `/Data` — `BaqSvc/{BAQID}` por sí solo sol
 GET /api/v2/odata/CFSJ_LAF/BaqSvc/OCA_PartesPorProveedor/Data?CurrentPlant=LAF&vendorId=001008
 ```
 
-Resultado real: HTTP 200, 47 renglones para el proveedor `001008`, primera fila:
+Resultado real (segunda verificación, ya con los campos calculados agregados): HTTP 200, 47 renglones para el proveedor `001008`, primera fila:
 ```json
-{"Vendor_Name":"JARAMILLO TREVIÑO GERARDO MAGDALENO","Vendor_VendorID":"001008","VendPart_PartNum":"1011500784","Part_PartDescription":"HOJA PARA TAMAL KG","Part_PUM":"KGS","PartPlant_MinimumQty":9,"PartPlant_MaximumQty":18,"VendPart_BaseUnitPrice":115,"PartPC_ProdCode":"000084","PartPC1_ProdCode":null,"RowIdent":"00000001-0000-0000-0000-000000000000"}
+{
+  "Vendor_Name": "JARAMILLO TREVIÑO GERARDO MAGDALENO",
+  "Vendor_VendorID": "001008",
+  "VendPart_PartNum": "1011500784",
+  "Part_PartDescription": "HOJA PARA TAMAL KG",
+  "Part_PUM": "KGS",
+  "PartPlant_MinimumQty": 9,
+  "PartPlant_MaximumQty": 18,
+  "VendPart_BaseUnitPrice": 115,
+  "PartPC_ProdCode": "000084",
+  "PartPC1_ProdCode": null,
+  "Calculated_Inventario": 0,
+  "Calculated_CantidadEnTransito": 0,
+  "RowIdent": "00000001-0000-0000-0000-000000000000"
+}
 ```
 
-Coincide con la captura de pantalla original de la customización C# (mismo proveedor, mismo primer artículo "HOJA PARA TAMAL KG"). **Falta re-verificar una vez que se agreguen `Inventario`/`CantidadEnTransito`** (pendiente de la sección 1.5) — cuando eso pase, correr de nuevo la misma llamada y confirmar que los dos campos aparecen sin prefijo, con valores numéricos (no null).
+Coincide con la captura de pantalla original de la customización C# (mismo proveedor, mismo primer artículo "HOJA PARA TAMAL KG"). Esta primera fila en particular tiene `0` en ambos campos calculados, pero eso es un valor real de negocio, no una falla: al revisar las 47 filas completas, 32 tienen `Calculated_Inventario` distinto de cero (ej. `8310400932` MANGO KG con `8.37`) y 21 tienen `Calculated_CantidadEnTransito` distinto de cero (ej. el mismo `8310400932` con `5`) — confirma que las subconsultas `InventarioSQ`/`TransitoSQ` sí están calculando correctamente. **Task 1 cerrada end-to-end.**
 
 ---
 
@@ -472,7 +493,7 @@ git commit -m "feat: add vendor search backed by Erp.BO.VendorSvc"
 
 ## Task 3: Partes por proveedor (backend)
 
-**Precondición: la Task 1 debe tener agregados los campos `Inventario`/`CantidadEnTransito` (sección 1.5) antes de que esta tarea se de por completa end-to-end.** El resto de la Task 1 ya está verificado con datos reales — el código de abajo ya usa el endpoint (`BaqSvc/OCA_PartesPorProveedor/Data`), los parámetros (`CurrentPlant`, `vendorId`) y los nombres de campo (`Vendor_Name`, `Vendor_VendorID`, etc.) confirmados por REST. Los tests no cambian aunque falten esos dos campos — usan valores de prueba, no el BAQ real —, pero el endpoint completo (Step 9 en adelante, verificación manual) no dará inventario real hasta que se agreguen.
+**Precondición cumplida: la Task 1 ya tiene los campos `Inventario`/`CantidadEnTransito` agregados y verificados por REST** (sección 1.5/1.7) — llegan como `Calculated_Inventario`/`Calculated_CantidadEnTransito`. El código de abajo ya usa el endpoint (`BaqSvc/OCA_PartesPorProveedor/Data`), los parámetros (`CurrentPlant`, `vendorId`) y los nombres de campo reales confirmados por REST, incluyendo el prefijo `Calculated_` en los dos campos calculados.
 
 **Files:**
 - Create: `src/OCAutomatica.Api/Parts/PartModels.cs`
@@ -539,8 +560,8 @@ public class PartServiceTests
         VendPart_BaseUnitPrice = cost,
         PartPC_ProdCode = "056",
         PartPC1_ProdCode = "",
-        Inventario = onHand,
-        CantidadEnTransito = 2m
+        Calculated_Inventario = onHand,
+        Calculated_CantidadEnTransito = 2m
     };
 
     [Fact]
@@ -634,7 +655,10 @@ public sealed class PartListResponse
 // Field names confirmed by live verification against the test environment
 // (Task 1, section 1.5/1.7). The BAQ was not given custom Display Names, so
 // Epicor exposes joined fields with its default TableAlias_Field convention.
-// Calculated fields (Inventario, CantidadEnTransito) get no prefix.
+// Inventario/CantidadEnTransito are calculated fields sourced from subqueries,
+// so Epicor prefixes them with the generic "Calculated_" alias (confirmed in
+// the BAQ Designer's Display Fields grid: alias Calculated_Inventario, label
+// "Inventario") rather than any table alias.
 public sealed class PartDto
 {
     public string Vendor_VendorID { get; set; } = string.Empty;
@@ -647,8 +671,8 @@ public sealed class PartDto
     public decimal VendPart_BaseUnitPrice { get; set; }
     public string? PartPC_ProdCode { get; set; }
     public string? PartPC1_ProdCode { get; set; }
-    public decimal Inventario { get; set; }
-    public decimal CantidadEnTransito { get; set; }
+    public decimal Calculated_Inventario { get; set; }
+    public decimal Calculated_CantidadEnTransito { get; set; }
 }
 ```
 
@@ -720,8 +744,8 @@ public sealed class PartService : IPartService
                 p.VendPart_BaseUnitPrice,
                 p.PartPC_ProdCode ?? string.Empty,
                 p.PartPC1_ProdCode ?? string.Empty,
-                p.Inventario,
-                p.CantidadEnTransito))
+                p.Calculated_Inventario,
+                p.Calculated_CantidadEnTransito))
             .ToList();
     }
 }
@@ -1267,7 +1291,7 @@ git commit -m "feat: wire vendor search and parts grid into the main app flow"
 - [ ] `dotnet test` pasa completo (38 tests: 30 del Plan 1 + 4 de `VendorServiceTests` + 4 de `PartServiceTests`)
 - [ ] `npm run build` en `src/web` compila sin errores
 - [x] El BAQ `OCA_PartesPorProveedor` está publicado y verificado contra Epicor real (Task 1, sección 1.7) — 47 renglones reales confirmados para el proveedor 001008
-- [ ] Los campos `Inventario`/`CantidadEnTransito` fueron agregados al BAQ y re-verificados por REST (Task 1, sección 1.5 — pendiente al momento de escribir este plan)
+- [x] Los campos `Inventario`/`CantidadEnTransito` fueron agregados al BAQ y re-verificados por REST (Task 1, sección 1.5) — llegan como `Calculated_Inventario`/`Calculated_CantidadEnTransito`, con valores numéricos reales (32/47 y 21/47 filas distintas de cero respectivamente)
 - [ ] Un comprador puede buscar un proveedor, seleccionarlo, y ver sus productos en el grid con inventario, costo, mínimo/máximo y cantidad en tránsito
 - [ ] Se puede marcar "Asignar" y capturar una cantidad decimal (0.5 se acepta, no se redondea)
 - [ ] Filtrar con el buscador del grid no borra las marcas ni las cantidades de filas que quedan ocultas
