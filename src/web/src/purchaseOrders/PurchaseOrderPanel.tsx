@@ -35,7 +35,11 @@ export function PurchaseOrderPanel({ vendorId, rows, canCreateOrders }: Props) {
   const selectedLines = rows.filter((r) => r.assign && !isRowInvalid(r))
   const hasInvalidSelection = rows.some((r) => r.assign && isRowInvalid(r))
   const canProcess =
-    canCreateOrders && selectedLines.length > 0 && !hasInvalidSelection && !submitting
+    canCreateOrders &&
+    selectedLines.length > 0 &&
+    !hasInvalidSelection &&
+    !submitting &&
+    poNum === null
 
   async function handleProcesar() {
     const submittedVendorId = vendorId
