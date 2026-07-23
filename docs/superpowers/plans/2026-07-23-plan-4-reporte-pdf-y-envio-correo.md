@@ -89,8 +89,9 @@ No se agrega ningún método nuevo a `IEpicorClient` en este plan — a diferenc
 - Modify: `src/OCAutomatica.Api/OCAutomatica.Api.csproj`
 - Modify: `src/OCAutomatica.Api/appsettings.json`
 - Modify: `src/OCAutomatica.Api/Program.cs`
+- Create: `src/OCAutomatica.Api/PurchaseOrders/EmailQueueOptions.cs`
 
-**Por qué existe esta tarea:** las tareas siguientes (3, 4, 6) dependen de que estos paquetes ya estén instalados y de que exista la sección de configuración `EmailQueue` — sin esto no compilan.
+**Por qué existe esta tarea:** las tareas siguientes (3, 4, 6) dependen de que estos paquetes ya estén instalados y de que exista la sección de configuración `EmailQueue` — sin esto no compilan. Cada tarea posterior registra su propio servicio nuevo en `Program.cs` cuando lo crea (ver sus propios steps) — así la solución compila, y todos los tests corren, después de cada tarea, no solo al final del plan.
 
 - [ ] **Step 1: Instalar los paquetes**
 
@@ -143,9 +144,32 @@ En `src/OCAutomatica.Api/appsettings.Development.json`, agregar (junto a la secc
 
 (`TrustServerCertificate=True` porque este servidor no expone un certificado TLS confiable para el driver — mismo tipo de ajuste que cualquier conexión SQL a un servidor interno sin PKI corporativo; si el servidor sí lo tiene, se puede quitar.)
 
-- [ ] **Step 5: Registrar la licencia de QuestPDF y la configuración en `Program.cs`**
+- [ ] **Step 5: Crear `EmailQueueOptions` (la clase, no solo la sección de config)**
 
-En `src/OCAutomatica.Api/Program.cs`, agregar el `using` y las dos líneas nuevas (licencia + `Configure<EmailQueueOptions>`) donde ya está `Configure<EpicorOptions>`:
+`Program.cs` (Step 6) necesita `Configure<EmailQueueOptions>(...)`, y esa clase no existe todavía en el proyecto — créala ahora, en la ubicación y namespace que el resto del plan espera (Task 3 la consume tal cual, sin volver a crearla):
+
+Crear `src/OCAutomatica.Api/PurchaseOrders/EmailQueueOptions.cs`:
+
+```csharp
+namespace OCAutomatica.Api.PurchaseOrders;
+
+public sealed class EmailQueueOptions
+{
+    public const string SectionName = "EmailQueue";
+
+    /// <summary>
+    /// Connection string to the CFSJService database on 192.168.100.18 —
+    /// the same server sp_EnviaOC_V2 inserts into via linked server. This
+    /// app connects to it directly and never touches the Epicor SQL Server
+    /// (SRVCSJPR2) or the stored procedure itself (see spec section 2.4).
+    /// </summary>
+    public string ConnectionString { get; set; } = string.Empty;
+}
+```
+
+- [ ] **Step 6: Registrar la licencia de QuestPDF y la configuración en `Program.cs`**
+
+En `src/OCAutomatica.Api/Program.cs`, agregar las dos líneas nuevas (licencia + `Configure<EmailQueueOptions>`) donde ya está `Configure<EpicorOptions>`. **No agregues `using OCAutomatica.Api.Users;` todavía** — ese namespace no existe hasta la Task 2, y un `using` a un namespace inexistente no compila:
 
 ```csharp
 using OCAutomatica.Api.Auth;
@@ -154,7 +178,6 @@ using OCAutomatica.Api.Epicor;
 using OCAutomatica.Api.Organization;
 using OCAutomatica.Api.Parts;
 using OCAutomatica.Api.PurchaseOrders;
-using OCAutomatica.Api.Users;
 using OCAutomatica.Api.Vendors;
 using QuestPDF.Infrastructure;
 
@@ -184,25 +207,27 @@ builder.Services.AddScoped<ICambiosFisicosService, CambiosFisicosService>();
 builder.Services.AddScoped<IPartService, PartService>();
 builder.Services.AddScoped<IPurchaseOrderService, PurchaseOrderService>();
 builder.Services.AddScoped<IPurchaseOrderHistoryService, PurchaseOrderHistoryService>();
-builder.Services.AddScoped<IPurchaseOrderReportService, PurchaseOrderReportService>();
-builder.Services.AddScoped<IPurchaseOrderEmailService, PurchaseOrderEmailService>();
-builder.Services.AddScoped<IUserDirectoryService, UserDirectoryService>();
-builder.Services.AddScoped<IEmailQueueRepository, EmailQueueRepository>();
 builder.Services.AddScoped<IVendorService, VendorService>();
+// IUserDirectoryService, IEmailQueueRepository, IPurchaseOrderReportService,
+// IPurchaseOrderEmailService: registered by Tasks 2, 3, 4, and 7
+// respectively, each when it creates its own type below.
 
 var app = builder.Build();
 ```
 
-(Los tipos `IPurchaseOrderReportService`, `IPurchaseOrderEmailService`, `IUserDirectoryService`, `IEmailQueueRepository` todavía no existen — este `Program.cs` no compilará hasta terminar las Tasks 2-8. Es esperado; no correr `dotnet build` sobre `Program.cs` solo hasta entonces.)
+**Nota sobre por qué la línea `Configure<EmailQueueOptions>` sí compila ya en este paso, pero ningún `AddScoped` de los cuatro servicios nuevos se agrega todavía:** el proyecto de tests referencia el ensamblado completo de la API — si `Program.cs` registrara un tipo que todavía no existe (como pasaría si esta Task agregara aquí los cuatro `AddScoped` de una vez), la solución completa deja de compilar y **ningún test de ningún archivo puede correr** hasta que exista el último tipo faltante, rompiendo el ciclo TDD de las Tasks 2-6. Por eso cada Task registra su propio servicio al crearlo (ver el Step correspondiente en las Tasks 2-4 y 7) — así `Program.cs` compila después de cada Task, no solo al final.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Verificar que la solución completa compila y los tests existentes pasan**
+
+Run: `dotnet test`
+Expected: todos los tests existentes siguen pasando (esta Task no le quita cobertura a nada — solo agrega configuración nueva que ningún test todavía ejercita).
+
+- [ ] **Step 8: Commit**
 
 ```bash
-git add src/OCAutomatica.Api/OCAutomatica.Api.csproj src/OCAutomatica.Api/appsettings.json src/OCAutomatica.Api/Program.cs
+git add src/OCAutomatica.Api/OCAutomatica.Api.csproj src/OCAutomatica.Api/appsettings.json src/OCAutomatica.Api/Program.cs src/OCAutomatica.Api/PurchaseOrders/EmailQueueOptions.cs
 git commit -m "chore: add QuestPDF and Microsoft.Data.SqlClient, configure EmailQueue options"
 ```
-
-(Este commit deja `Program.cs` sin compilar temporalmente por las referencias a tipos de las Tasks 2-8 — es una excepción deliberada a "commitear solo código que compila", documentada aquí porque las Tasks siguientes lo resuelven en la primera hora de trabajo. Si tu flujo de trabajo no tolera esto, mueve el Step 5 al final de la Task 8 en su lugar.)
 
 ---
 
@@ -442,40 +467,19 @@ git commit -m "feat: add IUserDirectoryService to resolve the logged-in user's e
 ## Task 3: `IEmailQueueRepository` — insert tipado a `interfaz_envia_oc`
 
 **Files:**
-- Create: `src/OCAutomatica.Api/PurchaseOrders/EmailQueueOptions.cs`
 - Create: `src/OCAutomatica.Api/PurchaseOrders/IEmailQueueRepository.cs`
 - Create: `src/OCAutomatica.Api/PurchaseOrders/EmailQueueRepository.cs`
+- Modify: `src/OCAutomatica.Api/Program.cs`
 
 **Por qué existe esta tarea:** es el reemplazo del `EXECUTE sp_EnviaOC_V2 '{0}', '{1}', ...` armado con `String.Format` (defecto 10.8 del spec original) — inserta directo en `192.168.100.18` con `SqlParameter` tipados, sin tocar el SQL Server de Epicor.
 
-**Nota sobre pruebas:** al igual que `EpicorClient` (que se prueba con un `HttpMessageHandler` falso porque `HttpClient` es fakeable así), `Microsoft.Data.SqlClient.SqlConnection` **no** tiene una interfaz nativa fakeable sin una capa de abstracción propia. Este proyecto no agrega esa capa extra solo para poder mockear el driver — en su lugar, `EmailQueueRepository` se prueba **manualmente contra la base real** (Step 5), y los servicios que lo consumen (Task 6) se prueban con un **fake de `IEmailQueueRepository`** — exactamente el mismo patrón que ya usa este proyecto para `IEpicorClient` en los servicios que lo consumen.
+**Nota sobre pruebas:** al igual que `EpicorClient` (que se prueba con un `HttpMessageHandler` falso porque `HttpClient` es fakeable así), `Microsoft.Data.SqlClient.SqlConnection` **no** tiene una interfaz nativa fakeable sin una capa de abstracción propia. Este proyecto no agrega esa capa extra solo para poder mockear el driver — en su lugar, `EmailQueueRepository` se prueba **manualmente contra la base real** (Step 4), y los servicios que lo consumen (Task 7) se prueban con un **fake de `IEmailQueueRepository`** — exactamente el mismo patrón que ya usa este proyecto para `IEpicorClient` en los servicios que lo consumen.
 
 **Interfaces:**
-- Consumes: `EmailQueueOptions.ConnectionString` (vía `IOptions<EmailQueueOptions>`).
+- Consumes: `EmailQueueOptions.ConnectionString` (vía `IOptions<EmailQueueOptions>`) — la clase ya existe, creada en la Task 1 (`src/OCAutomatica.Api/PurchaseOrders/EmailQueueOptions.cs`). No la vuelvas a crear.
 - Produces: `IEmailQueueRepository.InsertAsync(EmailQueueEntry entry, CancellationToken ct = default)` → `Task`. `EmailQueueEntry(string Company, string CompanyName, string Plant, string PlantName, string PoNumber, string VendorId, string VendorName, string Emails, int OcTipo)`.
 
-- [ ] **Step 1: Crear las opciones de configuración**
-
-Crear `src/OCAutomatica.Api/PurchaseOrders/EmailQueueOptions.cs`:
-
-```csharp
-namespace OCAutomatica.Api.PurchaseOrders;
-
-public sealed class EmailQueueOptions
-{
-    public const string SectionName = "EmailQueue";
-
-    /// <summary>
-    /// Connection string to the CFSJService database on 192.168.100.18 —
-    /// the same server sp_EnviaOC_V2 inserts into via linked server. This
-    /// app connects to it directly and never touches the Epicor SQL Server
-    /// (SRVCSJPR2) or the stored procedure itself (see spec section 2.4).
-    /// </summary>
-    public string ConnectionString { get; set; } = string.Empty;
-}
-```
-
-- [ ] **Step 2: Definir la interfaz y el registro a insertar**
+- [ ] **Step 1: Definir la interfaz y el registro a insertar**
 
 Crear `src/OCAutomatica.Api/PurchaseOrders/IEmailQueueRepository.cs`:
 
@@ -504,7 +508,7 @@ public interface IEmailQueueRepository
 }
 ```
 
-- [ ] **Step 3: Implementar el repositorio**
+- [ ] **Step 2: Implementar el repositorio**
 
 Crear `src/OCAutomatica.Api/PurchaseOrders/EmailQueueRepository.cs`:
 
@@ -556,10 +560,23 @@ public sealed class EmailQueueRepository : IEmailQueueRepository
 }
 ```
 
-- [ ] **Step 4: Verificar que compila**
+- [ ] **Step 3: Registrar el servicio en `Program.cs`**
 
-Run: `dotnet build src/OCAutomatica.Api`
-Expected: `Build succeeded.` (Program.cs sigue sin compilar por las tasks pendientes — construir solo el proyecto de la API, no la solución completa, hasta terminar la Task 8. Alternativa: `dotnet build src/OCAutomatica.Api/OCAutomatica.Api.csproj` para evitar que MSBuild intente correr `Program.cs` a través del `dotnet run` implícito.)
+En `src/OCAutomatica.Api/Program.cs`, reemplazar la línea `builder.Services.AddScoped<IVendorService, VendorService>();` y el comentario que la sigue por:
+
+```csharp
+builder.Services.AddScoped<IVendorService, VendorService>();
+builder.Services.AddScoped<IEmailQueueRepository, EmailQueueRepository>();
+// IPurchaseOrderReportService, IPurchaseOrderEmailService: registered by
+// Tasks 4 and 7 respectively, each when it creates its own type.
+```
+
+(`using OCAutomatica.Api.PurchaseOrders;` ya está en `Program.cs` desde antes de este plan — no hace falta agregarlo.)
+
+- [ ] **Step 4: Verificar que la solución completa compila y los tests existentes pasan**
+
+Run: `dotnet test`
+Expected: todos los tests existentes siguen pasando — esta Task no agrega tests nuevos (ver la nota sobre pruebas arriba), solo código de producción.
 
 - [ ] **Step 5: Verificación manual real (una sola vez, contra la base real)**
 
@@ -568,7 +585,7 @@ Con la cadena de conexión real ya en `appsettings.Development.json` (Task 1), e
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/OCAutomatica.Api/PurchaseOrders/EmailQueueOptions.cs src/OCAutomatica.Api/PurchaseOrders/IEmailQueueRepository.cs src/OCAutomatica.Api/PurchaseOrders/EmailQueueRepository.cs
+git add src/OCAutomatica.Api/PurchaseOrders/IEmailQueueRepository.cs src/OCAutomatica.Api/PurchaseOrders/EmailQueueRepository.cs src/OCAutomatica.Api/Program.cs
 git commit -m "feat: add IEmailQueueRepository for typed inserts into interfaz_envia_oc"
 ```
 
@@ -580,6 +597,7 @@ git commit -m "feat: add IEmailQueueRepository for typed inserts into interfaz_e
 - Create: `src/OCAutomatica.Api/PurchaseOrders/PurchaseOrderReportModels.cs`
 - Create: `src/OCAutomatica.Api/PurchaseOrders/IPurchaseOrderReportService.cs`
 - Create: `src/OCAutomatica.Api/PurchaseOrders/PurchaseOrderReportService.cs`
+- Modify: `src/OCAutomatica.Api/Program.cs`
 - Test: `tests/OCAutomatica.Api.Tests/PurchaseOrders/PurchaseOrderReportServiceTests.cs`
 
 **Por qué existe esta tarea:** junta, con llamadas OData, exactamente los mismos datos que traía el query embebido del `.rpt` de Crystal (spec, sección 2.1) — encabezado, líneas, dirección del proveedor, dirección de entrega con su fallback a la compañía, nombre/teléfono de planta, descripción del ShipVia, código EAN por línea, y el correo del comprador logueado (vía `IUserDirectoryService`, Task 2).
@@ -1142,14 +1160,28 @@ public sealed class PurchaseOrderReportService : IPurchaseOrderReportService
 Run: `dotnet test --filter PurchaseOrderReportServiceTests`
 Expected: `Passed! - Failed: 0, Passed: 5`
 
-- [ ] **Step 7: Verificar en vivo contra Epicor real**
+- [ ] **Step 7: Registrar el servicio en `Program.cs`**
+
+En `src/OCAutomatica.Api/Program.cs`, reemplazar el comentario `// IPurchaseOrderReportService, IPurchaseOrderEmailService: registered by...` por:
+
+```csharp
+builder.Services.AddScoped<IPurchaseOrderReportService, PurchaseOrderReportService>();
+// IPurchaseOrderEmailService: registered by Task 7, when it creates the type.
+```
+
+- [ ] **Step 8: Verificar que la solución completa compila y todos los tests pasan**
+
+Run: `dotnet test`
+Expected: todos los tests existentes siguen pasando, más los 5 nuevos de esta Task.
+
+- [ ] **Step 9: Verificar en vivo contra Epicor real**
 
 Antes de seguir a la Task 5, confirmar por Swagger que cada uno de estos campos existe con el nombre usado aquí: `Erp.BO.CompanySvc/Companies` (`Address1`, `Address2`, `City`, `State`, `Zip`, `StateTaxID`), `Erp.BO.VendorSvc/Vendors` (`Address1`, `Address2`, `City`), `Erp.BO.PlantSvc/Plants` (`PhoneNum` — `Name`/`Plant1` ya están confirmados por `OrganizationService`), `Erp.BO.ShipViaSvc/ShipVias` (`ShipViaCode`, `Description`), `Erp.BO.PartSvc/PartPCs` (`PartNum`, `UOMCode`, `PCType`, `PRODCODE`), y en el header de `POes` — `ShipAddress1/2`, `ShipCity`, `ShipState`, `ShipZIP`, `DocTotalTax`, `TotalWhTax`, `ShipViaCode`. Si algún nombre difiere, ajustar el DTO correspondiente (la deserialización insensible a mayúsculas ya cubre diferencias de casing, no de nombre).
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
-git add src/OCAutomatica.Api/PurchaseOrders/PurchaseOrderReportModels.cs src/OCAutomatica.Api/PurchaseOrders/IPurchaseOrderReportService.cs src/OCAutomatica.Api/PurchaseOrders/PurchaseOrderReportService.cs tests/OCAutomatica.Api.Tests/PurchaseOrders/PurchaseOrderReportServiceTests.cs
+git add src/OCAutomatica.Api/PurchaseOrders/PurchaseOrderReportModels.cs src/OCAutomatica.Api/PurchaseOrders/IPurchaseOrderReportService.cs src/OCAutomatica.Api/PurchaseOrders/PurchaseOrderReportService.cs src/OCAutomatica.Api/Program.cs tests/OCAutomatica.Api.Tests/PurchaseOrders/PurchaseOrderReportServiceTests.cs
 git commit -m "feat: add PurchaseOrderReportService to gather all data for the PO PDF report"
 ```
 
@@ -1487,7 +1519,6 @@ public sealed class PurchaseOrdersController : ControllerBase
     private readonly IPurchaseOrderService _purchaseOrders;
     private readonly IPurchaseOrderHistoryService _history;
     private readonly IPurchaseOrderReportService _reports;
-    private readonly IPurchaseOrderEmailService _emailService;
     private readonly ISessionStore _sessions;
     private readonly ILogger<PurchaseOrdersController> _logger;
 
@@ -1495,20 +1526,18 @@ public sealed class PurchaseOrdersController : ControllerBase
         IPurchaseOrderService purchaseOrders,
         IPurchaseOrderHistoryService history,
         IPurchaseOrderReportService reports,
-        IPurchaseOrderEmailService emailService,
         ISessionStore sessions,
         ILogger<PurchaseOrdersController> logger)
     {
         _purchaseOrders = purchaseOrders;
         _history = history;
         _reports = reports;
-        _emailService = emailService;
         _sessions = sessions;
         _logger = logger;
     }
 ```
 
-(`_emailService` se usa hasta la Task 8 — se agrega ahora para no tener que volver a tocar el constructor.)
+(No agregues todavía un campo/parámetro para `IPurchaseOrderEmailService` — ese tipo no existe hasta la Task 7, y agregarlo ahora rompería la compilación de todo el proyecto — con ella, la de todos los tests de la solución, no solo los de esta Task, porque el proyecto de tests referencia el ensamblado completo de la API. La Task 8 agrega ese campo cuando ya existe y realmente lo necesita.)
 
 Agregar el método de acción, junto a `GetLines`:
 
@@ -1543,9 +1572,10 @@ Agregar el método de acción, junto a `GetLines`:
     }
 ```
 
-- [ ] **Step 2: Ajustar `Program.cs` — `IPurchaseOrderEmailService` todavía no existe**
+- [ ] **Step 2: Verificar que la solución completa compila y todos los tests pasan**
 
-Este controlador ya no compila porque el constructor pide `IPurchaseOrderEmailService`, que llega en la Task 7. Es esperado: sigue así hasta terminar esa task. Si tu flujo de trabajo no tolera código sin compilar entre tasks, adelanta el Step 1 de la Task 7 (crear solo la interfaz vacía, sin implementación) antes de continuar.
+Run: `dotnet test`
+Expected: todos los tests existentes siguen pasando (este endpoint no tiene tests automatizados propios — sigue la misma convención que el resto de `PurchaseOrdersController`, que tampoco los tiene desde el Plan 3 — la verificación es manual, en el navegador, en la Task 9).
 
 - [ ] **Step 3: Commit**
 
@@ -1562,6 +1592,7 @@ git commit -m "feat: add GET /api/purchase-orders/{poNum}/report endpoint"
 - Create: `src/OCAutomatica.Api/PurchaseOrders/InvalidUserEmailException.cs`
 - Create: `src/OCAutomatica.Api/PurchaseOrders/IPurchaseOrderEmailService.cs`
 - Create: `src/OCAutomatica.Api/PurchaseOrders/PurchaseOrderEmailService.cs`
+- Modify: `src/OCAutomatica.Api/Program.cs`
 - Test: `tests/OCAutomatica.Api.Tests/PurchaseOrders/PurchaseOrderEmailServiceTests.cs`
 
 **Por qué existe esta tarea:** implementa exactamente lo que hacía `btnEnviarEmail_Click` (spec, sección 2.5) — validar el correo del usuario logueado, resolver `vendorID`/`vendorName` de la OC y el nombre de la planta, y encolar la copia con `oc_tipo = 2` — usando `IEmailQueueRepository` (Task 3) en vez del SP.
@@ -1844,15 +1875,23 @@ public sealed class PoVendorInfoDto
 Run: `dotnet test --filter PurchaseOrderEmailServiceTests`
 Expected: `Passed! - Failed: 0, Passed: 4`
 
-- [ ] **Step 6: Verificar que la solución completa compila**
+- [ ] **Step 6: Registrar el servicio en `Program.cs`**
 
-Run: `dotnet build`
-Expected: `Build succeeded.` (con esto, `PurchaseOrdersController` ya tiene todo lo que su constructor pide desde la Task 6.)
+En `src/OCAutomatica.Api/Program.cs`, reemplazar el comentario `// IPurchaseOrderEmailService: registered by Task 7, when it creates the type.` por:
 
-- [ ] **Step 7: Commit**
+```csharp
+builder.Services.AddScoped<IPurchaseOrderEmailService, PurchaseOrderEmailService>();
+```
+
+- [ ] **Step 7: Verificar que la solución completa compila y todos los tests pasan**
+
+Run: `dotnet test`
+Expected: todos los tests existentes siguen pasando, más los 4 nuevos de esta Task. (`PurchaseOrdersController` todavía no pide `IPurchaseOrderEmailService` en su constructor — eso lo agrega la Task 8, que es cuando realmente lo necesita.)
+
+- [ ] **Step 8: Commit**
 
 ```bash
-git add src/OCAutomatica.Api/PurchaseOrders/InvalidUserEmailException.cs src/OCAutomatica.Api/PurchaseOrders/IPurchaseOrderEmailService.cs src/OCAutomatica.Api/PurchaseOrders/PurchaseOrderEmailService.cs tests/OCAutomatica.Api.Tests/PurchaseOrders/PurchaseOrderEmailServiceTests.cs
+git add src/OCAutomatica.Api/PurchaseOrders/InvalidUserEmailException.cs src/OCAutomatica.Api/PurchaseOrders/IPurchaseOrderEmailService.cs src/OCAutomatica.Api/PurchaseOrders/PurchaseOrderEmailService.cs src/OCAutomatica.Api/Program.cs tests/OCAutomatica.Api.Tests/PurchaseOrders/PurchaseOrderEmailServiceTests.cs
 git commit -m "feat: add PurchaseOrderEmailService to send a PO copy to the logged-in buyer"
 ```
 
@@ -1868,9 +1907,36 @@ git commit -m "feat: add PurchaseOrderEmailService to send a PO copy to the logg
 **Interfaces:**
 - Consumes: `IPurchaseOrderEmailService.SendCopyToUserAsync` (Task 7), `session.AvailableCompanies` (ya existente en `UserSession`).
 
-- [ ] **Step 1: Agregar el endpoint**
+- [ ] **Step 1: Agregar el campo/parámetro del servicio y el endpoint**
 
-En `src/OCAutomatica.Api/Controllers/PurchaseOrdersController.cs`, agregar junto a `GetReport`:
+En `src/OCAutomatica.Api/Controllers/PurchaseOrdersController.cs`, agregar el campo y el parámetro de constructor (ahora sí existe `IPurchaseOrderEmailService`, creado en la Task 7):
+
+```csharp
+    private readonly IPurchaseOrderService _purchaseOrders;
+    private readonly IPurchaseOrderHistoryService _history;
+    private readonly IPurchaseOrderReportService _reports;
+    private readonly IPurchaseOrderEmailService _emailService;
+    private readonly ISessionStore _sessions;
+    private readonly ILogger<PurchaseOrdersController> _logger;
+
+    public PurchaseOrdersController(
+        IPurchaseOrderService purchaseOrders,
+        IPurchaseOrderHistoryService history,
+        IPurchaseOrderReportService reports,
+        IPurchaseOrderEmailService emailService,
+        ISessionStore sessions,
+        ILogger<PurchaseOrdersController> logger)
+    {
+        _purchaseOrders = purchaseOrders;
+        _history = history;
+        _reports = reports;
+        _emailService = emailService;
+        _sessions = sessions;
+        _logger = logger;
+    }
+```
+
+Luego agregar el método de acción, junto a `GetReport`:
 
 ```csharp
     [HttpPost("{poNum:int}/send-copy")]
