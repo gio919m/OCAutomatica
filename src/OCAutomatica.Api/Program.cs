@@ -37,8 +37,8 @@ builder.Services.AddScoped<IPurchaseOrderHistoryService, PurchaseOrderHistorySer
 builder.Services.AddScoped<IUserDirectoryService, UserDirectoryService>();
 builder.Services.AddScoped<IVendorService, VendorService>();
 builder.Services.AddScoped<IEmailQueueRepository, EmailQueueRepository>();
-// IPurchaseOrderReportService, IPurchaseOrderEmailService: registered by
-// Tasks 4 and 7 respectively, each when it creates its own type.
+builder.Services.AddScoped<IPurchaseOrderReportService, PurchaseOrderReportService>();
+// IPurchaseOrderEmailService: registered by Task 7, when it creates the type.
 
 var app = builder.Build();
 
