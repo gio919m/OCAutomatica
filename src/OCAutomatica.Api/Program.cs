@@ -5,6 +5,7 @@ using OCAutomatica.Api.Epicor;
 using OCAutomatica.Api.Organization;
 using OCAutomatica.Api.Parts;
 using OCAutomatica.Api.PurchaseOrders;
+using OCAutomatica.Api.Users;
 using OCAutomatica.Api.Vendors;
 using QuestPDF.Infrastructure;
 
@@ -34,10 +35,10 @@ builder.Services.AddScoped<ICambiosFisicosService, CambiosFisicosService>();
 builder.Services.AddScoped<IPartService, PartService>();
 builder.Services.AddScoped<IPurchaseOrderService, PurchaseOrderService>();
 builder.Services.AddScoped<IPurchaseOrderHistoryService, PurchaseOrderHistoryService>();
-builder.Services.AddScoped<IPurchaseOrderReportService, PurchaseOrderReportService>();
-builder.Services.AddScoped<IPurchaseOrderEmailService, PurchaseOrderEmailService>();
+// builder.Services.AddScoped<IPurchaseOrderReportService, PurchaseOrderReportService>(); // Task 4
+// builder.Services.AddScoped<IPurchaseOrderEmailService, PurchaseOrderEmailService>(); // Task 7
 builder.Services.AddScoped<IUserDirectoryService, UserDirectoryService>();
-builder.Services.AddScoped<IEmailQueueRepository, EmailQueueRepository>();
+// builder.Services.AddScoped<IEmailQueueRepository, EmailQueueRepository>(); // Task 7
 builder.Services.AddScoped<IVendorService, VendorService>();
 
 var app = builder.Build();
