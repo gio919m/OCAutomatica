@@ -52,8 +52,10 @@ export function VendorSearch({ onVendorSelected }: Props) {
   }
 
   return (
-    <div>
-      <label htmlFor="vendor-search">Proveedor</label>
+    <div className="field search-box" style={{ marginBottom: 0 }}>
+      <label htmlFor="vendor-search" className="field-label">
+        Proveedor
+      </label>
       <input
         id="vendor-search"
         value={query}
@@ -65,11 +67,12 @@ export function VendorSearch({ onVendorSelected }: Props) {
       {error && <p role="alert">{error}</p>}
 
       {results.length > 0 && (
-        <ul>
+        <ul className="search-results">
           {results.map((vendor) => (
-            <li key={vendor.vendorId}>
+            <li key={vendor.vendorId} className="search-result-item">
               <button type="button" onClick={() => pick(vendor)}>
-                {vendor.vendorId} — {vendor.name}
+                <span className="search-result-code">{vendor.vendorId}</span>
+                <span>{vendor.name}</span>
               </button>
             </li>
           ))}

@@ -4,10 +4,10 @@ interface Props {
 
 export function SelectionCounter({ count }: Props) {
   return (
-    <p>
+    <span className={`pill ${count > 0 ? 'pill-strong' : ''}`}>
       {count === 0
-        ? 'Ningun articulo seleccionado.'
-        : `${count} articulo(s) seleccionado(s).`}
-    </p>
+        ? 'Ningun articulo seleccionado'
+        : `${count} articulo(s) seleccionado(s)`}
+    </span>
   )
 }
