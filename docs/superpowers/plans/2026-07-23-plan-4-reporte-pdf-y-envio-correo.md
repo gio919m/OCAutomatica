@@ -137,10 +137,12 @@ En `src/OCAutomatica.Api/appsettings.Development.json`, agregar (junto a la secc
 ```json
 {
   "EmailQueue": {
-    "ConnectionString": "Server=192.168.100.18;Database=CFSJService;User Id=sa;Password=Epicor123;TrustServerCertificate=True;"
+    "ConnectionString": "Server=192.168.100.18;Database=CFSJService;User Id=TU_USUARIO;Password=TU_PASSWORD;TrustServerCertificate=True;"
   }
 }
 ```
+
+(la cadena real ya se le pidio al usuario durante el diseno de este plan, por chat — nunca se escribe en texto plano en un archivo versionado, ni siquiera en un doc de plan/spec.)
 
 (`TrustServerCertificate=True` porque este servidor no expone un certificado TLS confiable para el driver — mismo tipo de ajuste que cualquier conexión SQL a un servidor interno sin PKI corporativo; si el servidor sí lo tiene, se puede quitar.)
 
