@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using OCAutomatica.Api.Auth;
 using OCAutomatica.Api.Epicor;
 using OCAutomatica.Api.PurchaseOrders;
+using QuestPDF.Fluent;
 
 namespace OCAutomatica.Api.Controllers;
 
@@ -11,17 +12,20 @@ public sealed class PurchaseOrdersController : ControllerBase
 {
     private readonly IPurchaseOrderService _purchaseOrders;
     private readonly IPurchaseOrderHistoryService _history;
+    private readonly IPurchaseOrderReportService _reports;
     private readonly ISessionStore _sessions;
     private readonly ILogger<PurchaseOrdersController> _logger;
 
     public PurchaseOrdersController(
         IPurchaseOrderService purchaseOrders,
         IPurchaseOrderHistoryService history,
+        IPurchaseOrderReportService reports,
         ISessionStore sessions,
         ILogger<PurchaseOrdersController> logger)
     {
         _purchaseOrders = purchaseOrders;
         _history = history;
+        _reports = reports;
         _sessions = sessions;
         _logger = logger;
     }
@@ -119,6 +123,35 @@ public sealed class PurchaseOrdersController : ControllerBase
         {
             _logger.LogError(ex,
                 "Epicor error ({Reason}) while fetching lines for PO {PoNum} on {Company}",
+                ex.Reason, poNum, session.Company);
+            return HandleEpicorException(ex);
+        }
+    }
+
+    [HttpGet("{poNum:int}/report")]
+    public async Task<IActionResult> GetReport(int poNum, CancellationToken ct)
+    {
+        if (HttpContext.Items[SessionMiddleware.ItemKey] is not UserSession session)
+            return Unauthorized();
+
+        var credentials = _sessions.GetCredentials(session.SessionId);
+        if (credentials is null) return Unauthorized();
+
+        try
+        {
+            var data = await _reports.GetReportDataAsync(
+                session.Company, session.Plant, poNum, session.Username, credentials, ct);
+
+            if (data is null)
+                return NotFound(new { message = "No se encontro la orden de compra." });
+
+            var bytes = new PurchaseOrderPdfDocument(data).GeneratePdf();
+            return File(bytes, "application/pdf");
+        }
+        catch (EpicorException ex)
+        {
+            _logger.LogError(ex,
+                "Epicor error ({Reason}) while building the report for PO {PoNum} on {Company}",
                 ex.Reason, poNum, session.Company);
             return HandleEpicorException(ex);
         }
