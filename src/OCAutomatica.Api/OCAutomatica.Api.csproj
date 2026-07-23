@@ -7,5 +7,10 @@
     <UserSecretsId>7c566e66-a275-41ea-b424-f2c6213cdff8</UserSecretsId>
   </PropertyGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="7.0.2" />
+    <PackageReference Include="QuestPDF" Version="2026.7.1" />
+  </ItemGroup>
+
 
 </Project>
