@@ -24,7 +24,8 @@ public sealed class PurchaseOrderReportService : IPurchaseOrderReportService
         EpicorCredentials credentials,
         CancellationToken ct = default)
     {
-        var headerPath = $"Erp.BO.POSvc/POes('{company}',{poNum})?$expand=PODetails";
+        var escapedCompany = Uri.EscapeDataString(company.Replace("'", "''"));
+        var headerPath = $"Erp.BO.POSvc/POes('{escapedCompany}',{poNum})?$expand=PODetails";
         var header = await _epicor.GetAsync<PurchaseOrderReportHeaderDto>(company, headerPath, credentials, ct);
         if (header is null || header.PONum == 0) return null;
 
