@@ -42,7 +42,8 @@ public sealed class PurchaseOrderEmailService : IPurchaseOrderEmailService
                 "La direccion de email del usuario no esta capturada correctamente, no se puede enviar el email.");
         }
 
-        var vendorPath = $"Erp.BO.POSvc/POes('{company}',{poNum})?$select=VendorVendorID,VendorName";
+        var escapedCompany = Uri.EscapeDataString(company.Replace("'", "''"));
+        var vendorPath = $"Erp.BO.POSvc/POes('{escapedCompany}',{poNum})?$select=VendorVendorID,VendorName";
         var vendor = await _epicor.GetAsync<PoVendorInfoDto>(company, vendorPath, credentials, ct);
 
         var plants = await _organization.GetPlantsAsync(company, credentials, ct);

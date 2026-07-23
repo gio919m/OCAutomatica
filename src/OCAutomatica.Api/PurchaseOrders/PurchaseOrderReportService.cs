@@ -18,6 +18,7 @@ public sealed class PurchaseOrderReportService : IPurchaseOrderReportService
 
     public async Task<PurchaseOrderReportData?> GetReportDataAsync(
         string company,
+        string companyName,
         string plant,
         int poNum,
         string username,
@@ -65,6 +66,7 @@ public sealed class PurchaseOrderReportService : IPurchaseOrderReportService
 
         return new PurchaseOrderReportData(
             header.PONum,
+            companyName,
             plantDetails?.Name ?? string.Empty,
             header.Approve,
             header.OrderDate,

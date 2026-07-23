@@ -140,10 +140,13 @@ public sealed class PurchaseOrdersController : ControllerBase
         var credentials = _sessions.GetCredentials(session.SessionId);
         if (credentials is null) return Unauthorized();
 
+        var companyName = session.AvailableCompanies
+            .FirstOrDefault(c => c.Company == session.Company)?.CompanyName ?? session.Company;
+
         try
         {
             var data = await _reports.GetReportDataAsync(
-                session.Company, session.Plant, poNum, session.Username, credentials, ct);
+                session.Company, companyName, session.Plant, poNum, session.Username, credentials, ct);
 
             if (data is null)
                 return NotFound(new { message = "No se encontro la orden de compra." });

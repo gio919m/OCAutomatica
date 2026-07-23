@@ -2,6 +2,7 @@ namespace OCAutomatica.Api.PurchaseOrders;
 
 public sealed record PurchaseOrderReportData(
     int PoNum,
+    string CompanyName,
     string PlantName,
     bool Approved,
     DateTimeOffset? OrderDate,

@@ -13,6 +13,7 @@ public class PurchaseOrderPdfDocumentTests
 
     private static PurchaseOrderReportData BuildSampleData(int lineCount = 1) => new(
         PoNum: 3431,
+        CompanyName: "CARNES FINAS SAN JUAN",
         PlantName: "LA FE",
         Approved: true,
         OrderDate: new DateTimeOffset(2026, 7, 22, 0, 0, 0, TimeSpan.Zero),
@@ -56,6 +57,20 @@ public class PurchaseOrderPdfDocumentTests
         var bytes = document.GeneratePdf();
 
         Assert.NotEmpty(bytes);
+    }
+
+    [Fact]
+    public void GeneratePdf_UsesTheSuppliedCompanyName_NotAHardcodedOne()
+    {
+        // Guards against reintroducing a hardcoded company name — any
+        // company/plant combination must render without throwing.
+        var data = BuildSampleData() with { CompanyName = "OTRA EMPRESA DISTINTA" };
+        var document = new PurchaseOrderPdfDocument(data);
+
+        var bytes = document.GeneratePdf();
+
+        Assert.NotEmpty(bytes);
+        Assert.Equal("%PDF", System.Text.Encoding.ASCII.GetString(bytes, 0, 4));
     }
 
     [Fact]

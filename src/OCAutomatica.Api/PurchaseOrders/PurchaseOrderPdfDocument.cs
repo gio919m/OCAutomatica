@@ -44,7 +44,7 @@ public sealed class PurchaseOrderPdfDocument : IDocument
                 row.ConstantItem(80).AlignRight().Text(_data.Approved ? "APROBADA" : "NO APROBADA").Bold();
             });
             column.Item().Text($"Fecha Impresion: {_data.PrintedAt:dd/MM/yyyy} {_data.PrintedAt:hh:mm}tt").FontSize(8);
-            column.Item().Text(_data.PlantName).Bold();
+            column.Item().Text($"{_data.CompanyName} {_data.PlantName}").Bold();
             column.Item().Text($"Orden de Compra: {_data.PoNum}").Bold();
 
             column.Item().Row(row =>
@@ -154,7 +154,7 @@ public sealed class PurchaseOrderPdfDocument : IDocument
 
             column.Item().Row(row =>
             {
-                row.RelativeItem().Text("CARNES FINAS SAN JUAN LA FE").Bold();
+                row.RelativeItem().Text(_data.CompanyName).Bold();
                 row.ConstantItem(100).AlignRight().Text(text =>
                 {
                     text.Span("Página ");

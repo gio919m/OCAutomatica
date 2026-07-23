@@ -115,11 +115,13 @@ public class PurchaseOrderReportServiceTests
         var service = new PurchaseOrderReportService(
             BuildClientForFullHappyPath(), new StubUserDirectoryService("giovanni.montoya@carnessanjuan.com"), July2026);
 
-        var data = await service.GetReportDataAsync("CFSJ_LAF", "LAF", 3431, "epicor", Creds);
+        var data = await service.GetReportDataAsync(
+            "CFSJ_LAF", "CARNES FINAS SAN JUAN", "LAF", 3431, "epicor", Creds);
 
         Assert.NotNull(data);
         Assert.Equal(3431, data!.PoNum);
         Assert.True(data.Approved);
+        Assert.Equal("CARNES FINAS SAN JUAN", data.CompanyName);
         Assert.Equal("LA FE", data.PlantName);
         Assert.Equal("001008", data.VendorId);
         Assert.Equal("AV LOS ANGELES", data.VendorAddress1);
@@ -169,7 +171,8 @@ public class PurchaseOrderReportServiceTests
         });
         var service = new PurchaseOrderReportService(client, new StubUserDirectoryService(null), July2026);
 
-        var data = await service.GetReportDataAsync("CFSJ_LAF", "LAF", 3431, "epicor", Creds);
+        var data = await service.GetReportDataAsync(
+            "CFSJ_LAF", "CARNES FINAS SAN JUAN", "LAF", 3431, "epicor", Creds);
 
         Assert.Contains("CALLE FALSA 123", data!.DeliveryAddress);
         Assert.Contains("MONTERREY", data.DeliveryAddress);
@@ -183,7 +186,8 @@ public class PurchaseOrderReportServiceTests
         var client = BuildClientForFullHappyPath();
         var service = new PurchaseOrderReportService(client, new StubUserDirectoryService(null), July2026);
 
-        var data = await service.GetReportDataAsync("CFSJ_LAF", "LAF", 3431, "epicor", Creds);
+        var data = await service.GetReportDataAsync(
+            "CFSJ_LAF", "CARNES FINAS SAN JUAN", "LAF", 3431, "epicor", Creds);
 
         Assert.Contains("AVE. ACAPULCO NUM. 1100", data!.DeliveryAddress);
         Assert.Contains("GUADALUPE", data.DeliveryAddress);
@@ -196,7 +200,8 @@ public class PurchaseOrderReportServiceTests
         var client = new StubEpicorClient(_ => new PurchaseOrderReportHeaderDto { PONum = 0 });
         var service = new PurchaseOrderReportService(client, new StubUserDirectoryService(null), July2026);
 
-        var data = await service.GetReportDataAsync("CFSJ_LAF", "LAF", 999999, "epicor", Creds);
+        var data = await service.GetReportDataAsync(
+            "CFSJ_LAF", "CARNES FINAS SAN JUAN", "LAF", 999999, "epicor", Creds);
 
         Assert.Null(data);
     }
@@ -216,7 +221,8 @@ public class PurchaseOrderReportServiceTests
         });
         var service = new PurchaseOrderReportService(client, new StubUserDirectoryService(null), July2026);
 
-        var data = await service.GetReportDataAsync("CFSJ_LAF", "LAF", 3431, "epicor", Creds);
+        var data = await service.GetReportDataAsync(
+            "CFSJ_LAF", "CARNES FINAS SAN JUAN", "LAF", 3431, "epicor", Creds);
 
         Assert.Equal(string.Empty, data!.Lines[0].Ean);
     }

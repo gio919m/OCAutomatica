@@ -6,6 +6,7 @@ public interface IPurchaseOrderReportService
 {
     Task<PurchaseOrderReportData?> GetReportDataAsync(
         string company,
+        string companyName,
         string plant,
         int poNum,
         string username,
