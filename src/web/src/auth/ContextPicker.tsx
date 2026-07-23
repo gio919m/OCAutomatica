@@ -42,22 +42,42 @@ export function ContextPicker({ onContextSet }: Props) {
   }
 
   return (
-    <section>
-      <h2>Selecciona la planta</h2>
+    <div className="page-center">
+      <section className="auth-card">
+        <div className="auth-brand">
+          <span className="auth-logo">
+            <img src="/logo-cfsj.jpg" alt="Carnes Finas San Juan" />
+          </span>
+          <div>
+            <h2>Selecciona la planta</h2>
+            <p className="auth-brand-sub">Define el contexto de tu sesion</p>
+          </div>
+        </div>
 
-      <select value={selected} onChange={(e) => setSelected(e.target.value)}>
-        {plants.map((plant) => (
-          <option key={plant.plantId} value={plant.plantId}>
-            {plant.name}
-          </option>
-        ))}
-      </select>
+        <div className="field">
+          <label htmlFor="plant" className="field-label">
+            Planta
+          </label>
+          <select id="plant" value={selected} onChange={(e) => setSelected(e.target.value)}>
+            {plants.map((plant) => (
+              <option key={plant.plantId} value={plant.plantId}>
+                {plant.name}
+              </option>
+            ))}
+          </select>
+        </div>
 
-      {error && <p role="alert">{error}</p>}
+        {error && <p role="alert">{error}</p>}
 
-      <button type="button" onClick={confirm} disabled={busy || !selected}>
-        {busy ? 'Cargando...' : 'Continuar'}
-      </button>
-    </section>
+        <button
+          type="button"
+          onClick={confirm}
+          disabled={busy || !selected}
+          style={{ width: '100%', marginTop: 'var(--space-2)' }}
+        >
+          {busy ? 'Cargando...' : 'Continuar'}
+        </button>
+      </section>
+    </div>
   )
 }

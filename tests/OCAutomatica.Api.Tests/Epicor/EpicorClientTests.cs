@@ -60,6 +60,41 @@ public class EpicorClientTests
     }
 
     [Fact]
+    public async Task GetAsync_OmitsSessionInfoHeader_WhenNotSet()
+    {
+        var handler = new FakeHttpMessageHandler(
+            HttpStatusCode.OK, """{"Value":[]}""");
+        var client = BuildClient(handler);
+
+        await client.GetAsync<ODataList<Company>>(
+            "CFSJ_LAF",
+            "Erp.BO.CompanySvc/Companies",
+            new EpicorCredentials("user", "pass"));
+
+        Assert.False(handler.LastRequest!.Headers.Contains("SessionInfo"));
+    }
+
+    [Fact]
+    public async Task GetAsync_SendsSessionInfoAsJsonObject_WhenSet()
+    {
+        // Confirmed live against the real Epicor server via a working curl
+        // capture: the header value is a JSON object — {"SessionID":"..."} —
+        // not a bare GUID string.
+        var handler = new FakeHttpMessageHandler(
+            HttpStatusCode.OK, """{"Value":[]}""");
+        var client = BuildClient(handler);
+
+        await client.GetAsync<ODataList<Company>>(
+            "CFSJ_LAF",
+            "Erp.BO.CompanySvc/Companies",
+            new EpicorCredentials("user", "pass") { EpicorSessionId = "a64bd79c-8157-46a8-9f57-ea477707b404" });
+
+        Assert.Equal(
+            """{"SessionID":"a64bd79c-8157-46a8-9f57-ea477707b404"}""",
+            handler.LastRequest!.Headers.GetValues("SessionInfo").Single());
+    }
+
+    [Fact]
     public async Task GetAsync_DeserializesResponse()
     {
         var handler = new FakeHttpMessageHandler(

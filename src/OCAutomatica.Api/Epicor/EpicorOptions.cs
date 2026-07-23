@@ -9,5 +9,11 @@ public sealed class EpicorOptions
 
     public string ApiKey { get; set; } = string.Empty;
 
-    public List<string> Companies { get; set; } = new();
+    /// <summary>
+    /// Any company known to exist on the server. Used only to anchor the URL
+    /// for company-agnostic calls (e.g. looking up which companies a user can
+    /// access) — Epicor's REST surface requires a company segment in every
+    /// URL even when the underlying table (like Ice.UserComp) is system-wide.
+    /// </summary>
+    public string AnchorCompany { get; set; } = string.Empty;
 }

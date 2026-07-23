@@ -52,6 +52,20 @@ public sealed class SessionStore : ISessionStore
         return new EpicorCredentials(entry.Session.Username, password);
     }
 
+    public void SetAvailableCompanies(string sessionId, IReadOnlyList<CompanyAccess> companies)
+    {
+        if (!_entries.TryGetValue(sessionId, out var entry)) return;
+
+        entry.Session.AvailableCompanies = companies;
+    }
+
+    public void SetEpicorSessionId(string sessionId, string? epicorSessionId)
+    {
+        if (!_entries.TryGetValue(sessionId, out var entry)) return;
+
+        entry.Session.EpicorSessionId = epicorSessionId;
+    }
+
     public void SetContext(string sessionId, string company, string plant, string? buyerId)
     {
         if (!_entries.TryGetValue(sessionId, out var entry)) return;

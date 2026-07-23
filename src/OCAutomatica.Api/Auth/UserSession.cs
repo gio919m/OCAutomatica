@@ -11,5 +11,7 @@ public sealed class UserSession
     public string Company { get; set; } = string.Empty;
     public string Plant { get; set; } = string.Empty;
     public string? BuyerId { get; set; }
+    public IReadOnlyList<CompanyAccess> AvailableCompanies { get; set; } = Array.Empty<CompanyAccess>();
+    public string? EpicorSessionId { get; set; }
     public DateTimeOffset LastSeenUtc { get; set; }
 }

@@ -28,14 +28,23 @@ public sealed class TestEpicorClient : IEpicorClient
         return Task.FromResult((T?)result);
     }
 
+    /// <summary>
+    /// Invoked for every PostAsync call. Defaults to returning null (a no-op
+    /// success), or throw an EpicorException to simulate an Epicor error.
+    /// </summary>
+    public Func<string, string, object, EpicorCredentials, object?> OnPost { get; set; }
+        = (_, _, _, _) => null;
+
     public Task<T?> PostAsync<T>(
         string company,
         string relativePath,
         object body,
         EpicorCredentials credentials,
         CancellationToken ct = default)
-        => throw new NotSupportedException(
-            "PostAsync is not exercised by the endpoints covered by these integration tests.");
+    {
+        var result = OnPost(company, relativePath, body, credentials);
+        return Task.FromResult((T?)result);
+    }
 
     public Task<T?> InvokeFunctionAsync<T>(
         string company, string library, string function, object input,

@@ -60,6 +60,21 @@ public sealed class OrganizationController : ControllerBase
         if (HttpContext.Items[SessionMiddleware.ItemKey] is not UserSession session)
             return Unauthorized();
 
+        // Plant (and the buyer it resolves) is fixed for the lifetime of the
+        // session — every purchase order created afterwards is stamped with
+        // it. Changing to a DIFFERENT plant mid-session (without a fresh
+        // login) must never be possible. Re-submitting the SAME plant is a
+        // harmless no-op — it must succeed, since a page reload always
+        // re-renders the plant picker with no memory of the earlier choice.
+        if (!string.IsNullOrEmpty(session.Plant) &&
+            !string.Equals(session.Plant, request.Plant, StringComparison.Ordinal))
+        {
+            return Conflict(new
+            {
+                message = "La planta ya esta fijada para esta sesion. Cierra sesion para cambiar de planta."
+            });
+        }
+
         var credentials = _sessions.GetCredentials(session.SessionId);
         if (credentials is null) return Unauthorized();
 

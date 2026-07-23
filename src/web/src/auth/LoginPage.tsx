@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useState, type FormEvent } from 'react'
 import { api, type Session } from '../api/client'
 
 interface Props {
@@ -6,29 +6,17 @@ interface Props {
 }
 
 export function LoginPage({ onSignedIn }: Props) {
-  const [companies, setCompanies] = useState<string[]>([])
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
-  const [company, setCompany] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-
-  useEffect(() => {
-    api
-      .companies()
-      .then((list) => {
-        setCompanies(list)
-        if (list.length > 0) setCompany(list[0])
-      })
-      .catch(() => setError('No se pudo cargar la lista de companias.'))
-  }, [])
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault()
     setError(null)
     setBusy(true)
     try {
-      const session = await api.login(username, password, company)
+      const session = await api.login(username, password)
       onSignedIn(session)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo iniciar sesion.')
@@ -38,46 +26,51 @@ export function LoginPage({ onSignedIn }: Props) {
   }
 
   return (
-    <form onSubmit={handleSubmit}>
-      <h1>OC Automatica</h1>
+    <div className="page-center">
+      <form onSubmit={handleSubmit} className="auth-card">
+        <div className="auth-brand">
+          <span className="auth-logo">
+            <img src="/logo-cfsj.jpg" alt="Carnes Finas San Juan" />
+          </span>
+          <div>
+            <h1>OC Automatica</h1>
+            <p className="auth-brand-sub">Sistema de ordenes de compra</p>
+          </div>
+        </div>
 
-      <label htmlFor="company">Compania</label>
-      <select
-        id="company"
-        value={company}
-        onChange={(e) => setCompany(e.target.value)}
-      >
-        {companies.map((c) => (
-          <option key={c} value={c}>
-            {c}
-          </option>
-        ))}
-      </select>
+        <div className="field">
+          <label htmlFor="username" className="field-label">
+            Usuario
+          </label>
+          <input
+            id="username"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            autoComplete="username"
+            required
+          />
+        </div>
 
-      <label htmlFor="username">Usuario</label>
-      <input
-        id="username"
-        value={username}
-        onChange={(e) => setUsername(e.target.value)}
-        autoComplete="username"
-        required
-      />
+        <div className="field">
+          <label htmlFor="password" className="field-label">
+            Contrasena
+          </label>
+          <input
+            id="password"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="current-password"
+            required
+          />
+        </div>
 
-      <label htmlFor="password">Contrasena</label>
-      <input
-        id="password"
-        type="password"
-        value={password}
-        onChange={(e) => setPassword(e.target.value)}
-        autoComplete="current-password"
-        required
-      />
+        {error && <p role="alert">{error}</p>}
 
-      {error && <p role="alert">{error}</p>}
-
-      <button type="submit" disabled={busy || !company}>
-        {busy ? 'Validando...' : 'Entrar'}
-      </button>
-    </form>
+        <button type="submit" disabled={busy} style={{ width: '100%', marginTop: 'var(--space-2)' }}>
+          {busy ? 'Validando...' : 'Entrar'}
+        </button>
+      </form>
+    </div>
   )
 }

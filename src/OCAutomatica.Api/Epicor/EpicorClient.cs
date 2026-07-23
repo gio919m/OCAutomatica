@@ -62,6 +62,14 @@ public sealed class EpicorClient : IEpicorClient
             Encoding.UTF8.GetBytes($"{credentials.Username}:{credentials.Password}"));
         request.Headers.Authorization = new AuthenticationHeaderValue("Basic", token);
         request.Headers.Add("x-api-key", _options.ApiKey);
+
+        if (!string.IsNullOrEmpty(credentials.EpicorSessionId))
+        {
+            // Confirmed live via a working curl capture: the header value is
+            // a JSON object, not a bare GUID — {"SessionID":"..."}.
+            var sessionInfo = JsonSerializer.Serialize(new { SessionID = credentials.EpicorSessionId });
+            request.Headers.Add("SessionInfo", sessionInfo);
+        }
     }
 
     public Task<T?> InvokeFunctionAsync<T>(
