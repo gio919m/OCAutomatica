@@ -101,7 +101,10 @@ public sealed class PurchaseOrderReportService : IPurchaseOrderReportService
         string company, EpicorCredentials credentials, CancellationToken ct)
     {
         var escaped = Uri.EscapeDataString(company.Replace("'", "''"));
-        var path = $"Erp.BO.CompanySvc/Companies?$filter=Company eq '{escaped}'&$select=Address1,Address2,City,State,Zip,StateTaxID&$top=1";
+        // Epicor exposes this key as "Company1" (same convention as Plant1 on
+        // Erp.Plant) — confirmed live via Swagger's keyed route
+        // Companies('{Company1}'), not "Company" as the raw SQL column is named.
+        var path = $"Erp.BO.CompanySvc/Companies?$filter=Company1 eq '{escaped}'&$select=Address1,Address2,City,State,Zip,StateTaxID&$top=1";
         var response = await _epicor.GetAsync<CompanyAddressListResponse>(company, path, credentials, ct);
         return response?.Value.FirstOrDefault();
     }
