@@ -172,5 +172,12 @@ export const api = {
 
     lines: (poNum: number) =>
       request<PurchaseOrderDetailLine[]>(`/api/purchase-orders/${poNum}/lines`),
+
+    reportUrl: (poNum: number) => `/api/purchase-orders/${poNum}/report`,
+
+    sendCopy: (poNum: number) =>
+      request<{ message: string }>(`/api/purchase-orders/${poNum}/send-copy`, {
+        method: 'POST',
+      }),
   },
 }

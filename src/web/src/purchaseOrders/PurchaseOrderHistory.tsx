@@ -32,6 +32,8 @@ export function PurchaseOrderHistory({ vendorId, onBack }: Props) {
   const [lines, setLines] = useState<PurchaseOrderDetailLine[]>([])
   const [linesLoading, setLinesLoading] = useState(false)
   const [linesError, setLinesError] = useState<string | null>(null)
+  const [sendingCopy, setSendingCopy] = useState(false)
+  const [sendCopyResult, setSendCopyResult] = useState<{ ok: boolean; message: string } | null>(null)
 
   function loadOrders() {
     setLoading(true)
@@ -41,6 +43,28 @@ export function PurchaseOrderHistory({ vendorId, onBack }: Props) {
       .then(setOrders)
       .catch((err) => setError(err instanceof Error ? err.message : 'Error al cargar las ordenes.'))
       .finally(() => setLoading(false))
+  }
+
+  function handleVisualizarOc() {
+    if (selectedPoNum === null) return
+    window.open(api.purchaseOrders.reportUrl(selectedPoNum), '_blank')
+  }
+
+  async function handleEnviarCopia() {
+    if (selectedPoNum === null) return
+    setSendingCopy(true)
+    setSendCopyResult(null)
+    try {
+      const result = await api.purchaseOrders.sendCopy(selectedPoNum)
+      setSendCopyResult({ ok: true, message: result.message })
+    } catch (err) {
+      setSendCopyResult({
+        ok: false,
+        message: err instanceof Error ? err.message : 'No se pudo enviar el correo.',
+      })
+    } finally {
+      setSendingCopy(false)
+    }
   }
 
   useEffect(() => {
@@ -103,20 +127,26 @@ export function PurchaseOrderHistory({ vendorId, onBack }: Props) {
         <button
           type="button"
           className="btn-secondary"
-          disabled
-          title="Disponible cuando se integre el reporte de la orden (Plan 4)"
+          disabled={selectedPoNum === null}
+          onClick={handleVisualizarOc}
         >
           Visualizar OC
         </button>
         <button
           type="button"
           className="btn-secondary"
-          disabled
-          title="Disponible cuando se integre el envio de correo (Plan 4)"
+          disabled={selectedPoNum === null || sendingCopy}
+          onClick={handleEnviarCopia}
         >
-          Enviar OC por email al usuario
+          {sendingCopy ? 'Enviando...' : 'Enviar OC por email al usuario'}
         </button>
       </div>
+
+      {sendCopyResult && (
+        <p className={sendCopyResult.ok ? 'alert alert-success' : undefined} role={sendCopyResult.ok ? undefined : 'alert'}>
+          {sendCopyResult.message}
+        </p>
+      )}
 
       {loading && <p className="text-muted">Cargando ordenes...</p>}
       {error && <p role="alert">{error}</p>}
