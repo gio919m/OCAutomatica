@@ -35,10 +35,10 @@ builder.Services.AddScoped<ICambiosFisicosService, CambiosFisicosService>();
 builder.Services.AddScoped<IPartService, PartService>();
 builder.Services.AddScoped<IPurchaseOrderService, PurchaseOrderService>();
 builder.Services.AddScoped<IPurchaseOrderHistoryService, PurchaseOrderHistoryService>();
-// builder.Services.AddScoped<IPurchaseOrderReportService, PurchaseOrderReportService>(); // Task 4
-// builder.Services.AddScoped<IPurchaseOrderEmailService, PurchaseOrderEmailService>(); // Task 7
+builder.Services.AddScoped<IPurchaseOrderReportService, PurchaseOrderReportService>(); // Task 4
+builder.Services.AddScoped<IPurchaseOrderEmailService, PurchaseOrderEmailService>(); // Task 7
 builder.Services.AddScoped<IUserDirectoryService, UserDirectoryService>();
-// builder.Services.AddScoped<IEmailQueueRepository, EmailQueueRepository>(); // Task 7
+builder.Services.AddScoped<IEmailQueueRepository, EmailQueueRepository>(); // Task 7
 builder.Services.AddScoped<IVendorService, VendorService>();
 
 var app = builder.Build();
