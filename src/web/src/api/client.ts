@@ -1,9 +1,15 @@
+export interface CompanyOption {
+  company: string
+  companyName: string
+}
+
 export interface Session {
   username: string
   company: string
   plant: string
   buyerId: string | null
   buyerName: string | null
+  companies: CompanyOption[]
 }
 
 export interface Plant {
@@ -50,6 +56,30 @@ export interface CreatePurchaseOrderResult {
   poNum: number
 }
 
+export interface PurchaseOrderSummary {
+  poNum: number
+  vendorId: string
+  vendorName: string
+  buyerId: string
+  buyerName: string
+  orderDate: string | null
+  shipName: string
+  openOrder: boolean
+}
+
+export interface PurchaseOrderDetailLine {
+  line: number
+  rel: number
+  partNum: string
+  description: string
+  orderQty: number
+  uom: string
+  unitCost: number
+  receivedQty: number
+  pendingQty: number
+  total: number
+}
+
 export interface CambioFisico {
   character01: string
   character02: string
@@ -89,12 +119,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  companies: () => request<string[]>('/api/auth/companies'),
-
-  login: (username: string, password: string, company: string) =>
+  login: (username: string, password: string) =>
     request<Session>('/api/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ username, password, company }),
+      body: JSON.stringify({ username, password }),
+    }),
+
+  selectCompany: (company: string) =>
+    request<Session>('/api/auth/company', {
+      method: 'POST',
+      body: JSON.stringify({ company }),
     }),
 
   logout: () => request<void>('/api/auth/logout', { method: 'POST' }),
@@ -130,5 +164,13 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ vendorId, comentarios, lineas }),
       }),
+
+    byVendor: (vendorId: string) =>
+      request<PurchaseOrderSummary[]>(
+        `/api/purchase-orders?vendorId=${encodeURIComponent(vendorId)}`,
+      ),
+
+    lines: (poNum: number) =>
+      request<PurchaseOrderDetailLine[]>(`/api/purchase-orders/${poNum}/lines`),
   },
 }

@@ -10,15 +10,18 @@ namespace OCAutomatica.Api.Controllers;
 public sealed class PurchaseOrdersController : ControllerBase
 {
     private readonly IPurchaseOrderService _purchaseOrders;
+    private readonly IPurchaseOrderHistoryService _history;
     private readonly ISessionStore _sessions;
     private readonly ILogger<PurchaseOrdersController> _logger;
 
     public PurchaseOrdersController(
         IPurchaseOrderService purchaseOrders,
+        IPurchaseOrderHistoryService history,
         ISessionStore sessions,
         ILogger<PurchaseOrdersController> logger)
     {
         _purchaseOrders = purchaseOrders;
+        _history = history;
         _sessions = sessions;
         _logger = logger;
     }
@@ -67,6 +70,56 @@ public sealed class PurchaseOrdersController : ControllerBase
             _logger.LogError(ex,
                 "Epicor error ({Reason}) while creating a purchase order for vendor {VendorId} on {Company}",
                 ex.Reason, request.VendorId, session.Company);
+            return HandleEpicorException(ex);
+        }
+    }
+
+    [HttpGet]
+    public async Task<IActionResult> GetByVendor(
+        [FromQuery] string vendorId, CancellationToken ct)
+    {
+        if (HttpContext.Items[SessionMiddleware.ItemKey] is not UserSession session)
+            return Unauthorized();
+
+        var credentials = _sessions.GetCredentials(session.SessionId);
+        if (credentials is null) return Unauthorized();
+
+        if (string.IsNullOrWhiteSpace(vendorId))
+            return BadRequest(new { message = "Es necesario indicar un proveedor." });
+
+        try
+        {
+            var orders = await _history.GetByVendorAsync(session.Company, vendorId, credentials, ct);
+            return Ok(orders);
+        }
+        catch (EpicorException ex)
+        {
+            _logger.LogError(ex,
+                "Epicor error ({Reason}) while listing purchase orders for vendor {VendorId} on {Company}",
+                ex.Reason, vendorId, session.Company);
+            return HandleEpicorException(ex);
+        }
+    }
+
+    [HttpGet("{poNum:int}/lines")]
+    public async Task<IActionResult> GetLines(int poNum, CancellationToken ct)
+    {
+        if (HttpContext.Items[SessionMiddleware.ItemKey] is not UserSession session)
+            return Unauthorized();
+
+        var credentials = _sessions.GetCredentials(session.SessionId);
+        if (credentials is null) return Unauthorized();
+
+        try
+        {
+            var lines = await _history.GetDetailAsync(session.Company, poNum, credentials, ct);
+            return Ok(lines);
+        }
+        catch (EpicorException ex)
+        {
+            _logger.LogError(ex,
+                "Epicor error ({Reason}) while fetching lines for PO {PoNum} on {Company}",
+                ex.Reason, poNum, session.Company);
             return HandleEpicorException(ex);
         }
     }

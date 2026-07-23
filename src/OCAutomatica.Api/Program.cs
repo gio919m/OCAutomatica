@@ -24,6 +24,7 @@ builder.Services.AddScoped<IOrganizationService, OrganizationService>();
 builder.Services.AddScoped<ICambiosFisicosService, CambiosFisicosService>();
 builder.Services.AddScoped<IPartService, PartService>();
 builder.Services.AddScoped<IPurchaseOrderService, PurchaseOrderService>();
+builder.Services.AddScoped<IPurchaseOrderHistoryService, PurchaseOrderHistoryService>();
 builder.Services.AddScoped<IVendorService, VendorService>();
 
 var app = builder.Build();
