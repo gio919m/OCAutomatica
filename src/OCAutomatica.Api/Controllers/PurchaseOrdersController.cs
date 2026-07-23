@@ -13,6 +13,7 @@ public sealed class PurchaseOrdersController : ControllerBase
     private readonly IPurchaseOrderService _purchaseOrders;
     private readonly IPurchaseOrderHistoryService _history;
     private readonly IPurchaseOrderReportService _reports;
+    private readonly IPurchaseOrderEmailService _emailService;
     private readonly ISessionStore _sessions;
     private readonly ILogger<PurchaseOrdersController> _logger;
 
@@ -20,12 +21,14 @@ public sealed class PurchaseOrdersController : ControllerBase
         IPurchaseOrderService purchaseOrders,
         IPurchaseOrderHistoryService history,
         IPurchaseOrderReportService reports,
+        IPurchaseOrderEmailService emailService,
         ISessionStore sessions,
         ILogger<PurchaseOrdersController> logger)
     {
         _purchaseOrders = purchaseOrders;
         _history = history;
         _reports = reports;
+        _emailService = emailService;
         _sessions = sessions;
         _logger = logger;
     }
@@ -152,6 +155,38 @@ public sealed class PurchaseOrdersController : ControllerBase
         {
             _logger.LogError(ex,
                 "Epicor error ({Reason}) while building the report for PO {PoNum} on {Company}",
+                ex.Reason, poNum, session.Company);
+            return HandleEpicorException(ex);
+        }
+    }
+
+    [HttpPost("{poNum:int}/send-copy")]
+    public async Task<IActionResult> SendCopy(int poNum, CancellationToken ct)
+    {
+        if (HttpContext.Items[SessionMiddleware.ItemKey] is not UserSession session)
+            return Unauthorized();
+
+        var credentials = _sessions.GetCredentials(session.SessionId);
+        if (credentials is null) return Unauthorized();
+
+        var companyName = session.AvailableCompanies
+            .FirstOrDefault(c => c.Company == session.Company)?.CompanyName ?? session.Company;
+
+        try
+        {
+            var email = await _emailService.SendCopyToUserAsync(
+                session.Company, companyName, session.Plant, session.Username, poNum, credentials, ct);
+
+            return Ok(new { message = $"Se envio la OC a tu correo: {email}" });
+        }
+        catch (InvalidUserEmailException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (EpicorException ex)
+        {
+            _logger.LogError(ex,
+                "Epicor error ({Reason}) while sending a PO copy email for PO {PoNum} on {Company}",
                 ex.Reason, poNum, session.Company);
             return HandleEpicorException(ex);
         }
