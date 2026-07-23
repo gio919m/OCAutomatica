@@ -36,10 +36,9 @@ builder.Services.AddScoped<IPurchaseOrderService, PurchaseOrderService>();
 builder.Services.AddScoped<IPurchaseOrderHistoryService, PurchaseOrderHistoryService>();
 builder.Services.AddScoped<IUserDirectoryService, UserDirectoryService>();
 builder.Services.AddScoped<IVendorService, VendorService>();
-// IEmailQueueRepository, IPurchaseOrderReportService, IPurchaseOrderEmailService:
-// registered by Tasks 3, 4, and 7 respectively, when each type is created —
-// the test project references this whole assembly, so registering a type
-// before it exists breaks every test in the solution, not just the new ones.
+builder.Services.AddScoped<IEmailQueueRepository, EmailQueueRepository>();
+// IPurchaseOrderReportService, IPurchaseOrderEmailService: registered by
+// Tasks 4 and 7 respectively, each when it creates its own type.
 
 var app = builder.Build();
 
