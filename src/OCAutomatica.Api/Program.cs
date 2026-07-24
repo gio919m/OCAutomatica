@@ -43,8 +43,22 @@ builder.Services.AddScoped<IPurchaseOrderEmailService, PurchaseOrderEmailService
 var app = builder.Build();
 
 app.UseHttpsRedirection();
+
+// Serves the React build (copied into wwwroot/ as part of publishing — see
+// docs/superpowers/specs/2026-07-24-publicacion-iis-design.md) so the API
+// and the SPA are one site: no CORS, no reverse proxy for the frontend.
+app.UseDefaultFiles();
+app.UseStaticFiles();
+
 app.UseMiddleware<SessionMiddleware>();
 app.MapControllers();
+
+// Any route that isn't an API route or a real static file falls back to
+// index.html, so React Router-less client-side navigation (this app has
+// none today, but this is also what makes a hard refresh on any URL work)
+// doesn't 404. Must be registered after MapControllers so API routes are
+// matched first.
+app.MapFallbackToFile("index.html");
 
 app.Run();
 
