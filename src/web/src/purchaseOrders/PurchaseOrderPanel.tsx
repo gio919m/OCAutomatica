@@ -36,6 +36,8 @@ export function PurchaseOrderPanel({ vendorId, rows, canCreateOrders }: Props) {
     setError(null)
     setManualEmails([])
     setRecipients([])
+    setNewEmailInput('')
+    setEmailInputError(null)
     api.cambiosFisicos
       .byVendor(vendorId)
       .then((data) => {

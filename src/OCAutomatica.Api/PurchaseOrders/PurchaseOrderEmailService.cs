@@ -99,8 +99,8 @@ public sealed class PurchaseOrderEmailService : IPurchaseOrderEmailService
         var recipients = await GetRecipientsAsync(company, vendorId, username, credentials, ct);
 
         var validManual = manualEmails
-            .Where(e => !string.IsNullOrWhiteSpace(e) && EmailPattern.IsMatch(e))
-            .Select(e => e.Trim());
+            .Select(e => e.Trim())
+            .Where(e => !string.IsNullOrWhiteSpace(e) && EmailPattern.IsMatch(e));
 
         var allEmails = recipients
             .Where(r => r.Valido)
