@@ -309,7 +309,7 @@ export function PurchaseOrderPanel({ vendorId, rows, canCreateOrders }: Props) {
           <p className="alert alert-success">Orden de compra creada: OC {poNum}</p>
         )}
         {vendorEmailSent && (
-          <p className="alert alert-success">Se encolo el envio de la OC al proveedor.</p>
+          <p className="alert alert-success">Se ha Enviado la OC al Proveedor.</p>
         )}
 
         <button
