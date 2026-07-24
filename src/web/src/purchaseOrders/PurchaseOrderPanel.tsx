@@ -21,6 +21,7 @@ export function PurchaseOrderPanel({ vendorId, rows, canCreateOrders }: Props) {
   const [submitting, setSubmitting] = useState(false)
   const [poNum, setPoNum] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [vendorEmailSent, setVendorEmailSent] = useState(false)
   const [comentariosDraft, setComentariosDraft] = useState<string | null>(null)
   const [recipients, setRecipients] = useState<EmailRecipient[]>([])
   const [manualEmails, setManualEmails] = useState<string[]>([])
@@ -34,6 +35,7 @@ export function PurchaseOrderPanel({ vendorId, rows, canCreateOrders }: Props) {
     setComentarios('')
     setPoNum(null)
     setError(null)
+    setVendorEmailSent(false)
     setManualEmails([])
     setRecipients([])
     setNewEmailInput('')
@@ -76,6 +78,7 @@ export function PurchaseOrderPanel({ vendorId, rows, canCreateOrders }: Props) {
     setSubmitting(true)
     setError(null)
     setPoNum(null)
+    setVendorEmailSent(false)
     try {
       const lineas = selectedLines.map((r) => ({
         partNum: r.partNum,
@@ -88,6 +91,7 @@ export function PurchaseOrderPanel({ vendorId, rows, canCreateOrders }: Props) {
 
       try {
         await api.purchaseOrders.sendToVendor(result.poNum, vendorId, manualEmails)
+        if (latestVendorIdRef.current === submittedVendorId) setVendorEmailSent(true)
       } catch {
         if (latestVendorIdRef.current === submittedVendorId) {
           setError('La orden se creo, pero el correo al proveedor no se pudo enviar.')
@@ -303,6 +307,9 @@ export function PurchaseOrderPanel({ vendorId, rows, canCreateOrders }: Props) {
         {error && <p role="alert">{error}</p>}
         {poNum !== null && (
           <p className="alert alert-success">Orden de compra creada: OC {poNum}</p>
+        )}
+        {vendorEmailSent && (
+          <p className="alert alert-success">Se encolo el envio de la OC al proveedor.</p>
         )}
 
         <button
