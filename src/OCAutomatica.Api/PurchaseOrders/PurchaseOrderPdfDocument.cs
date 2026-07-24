@@ -119,17 +119,17 @@ public sealed class PurchaseOrderPdfDocument : IDocument
 
             foreach (var line in _data.Lines)
             {
-                table.Cell().Text(line.Line.ToString());
-                table.Cell().Column(col =>
+                table.Cell().PaddingVertical(5).Text(line.Line.ToString());
+                table.Cell().PaddingVertical(5).Column(col =>
                 {
                     col.Item().Text(line.PartNum);
                     col.Item().Text(line.Description);
                 });
-                table.Cell().Text(line.Ean);
-                table.Cell().AlignRight().Text(line.OrderQty.ToString("0.00"));
-                table.Cell().Text(line.Uom);
-                table.Cell().AlignRight().Text(line.UnitCost.ToString("0.00"));
-                table.Cell().AlignRight().Text(line.ExtendedPrice.ToString("0.00"));
+                table.Cell().PaddingVertical(5).Text(line.Ean);
+                table.Cell().PaddingVertical(5).AlignRight().Text(line.OrderQty.ToString("0.00"));
+                table.Cell().PaddingVertical(5).Text(line.Uom);
+                table.Cell().PaddingVertical(5).AlignRight().Text(line.UnitCost.ToString("0.00"));
+                table.Cell().PaddingVertical(5).AlignRight().Text(line.ExtendedPrice.ToString("0.00"));
             }
         });
     }
