@@ -246,7 +246,7 @@ public sealed class PurchaseOrdersController : ControllerBase
             await _emailService.SendToVendorAsync(
                 session.Company, companyName, session.Plant, request.VendorId, session.Username, poNum,
                 request.ManualEmails ?? new List<string>(), credentials, ct);
-            return Ok();
+            return NoContent();
         }
         catch (EpicorException ex)
         {
