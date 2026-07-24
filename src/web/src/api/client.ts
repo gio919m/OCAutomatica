@@ -88,6 +88,12 @@ export interface CambioFisico {
   character06: string
 }
 
+export interface EmailRecipient {
+  tipo: string
+  email: string
+  valido: boolean
+}
+
 export class ApiError extends Error {
   status: number
 
@@ -178,6 +184,17 @@ export const api = {
     sendCopy: (poNum: number) =>
       request<{ message: string }>(`/api/purchase-orders/${poNum}/send-copy`, {
         method: 'POST',
+      }),
+
+    emailRecipients: (vendorId: string) =>
+      request<EmailRecipient[]>(
+        `/api/purchase-orders/email-recipients?vendorId=${encodeURIComponent(vendorId)}`,
+      ),
+
+    sendToVendor: (poNum: number, vendorId: string, manualEmails: string[]) =>
+      request<void>(`/api/purchase-orders/${poNum}/send-to-vendor`, {
+        method: 'POST',
+        body: JSON.stringify({ vendorId, manualEmails }),
       }),
   },
 }

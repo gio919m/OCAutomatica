@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, type CambioFisico } from '../api/client'
+import { api, type CambioFisico, type EmailRecipient } from '../api/client'
 import { isRowInvalid, type PartRowState } from '../parts/PartsGrid'
 import { Modal } from '../components/Modal'
 
@@ -22,6 +22,10 @@ export function PurchaseOrderPanel({ vendorId, rows, canCreateOrders }: Props) {
   const [poNum, setPoNum] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [comentariosDraft, setComentariosDraft] = useState<string | null>(null)
+  const [recipients, setRecipients] = useState<EmailRecipient[]>([])
+  const [manualEmails, setManualEmails] = useState<string[]>([])
+  const [newEmailInput, setNewEmailInput] = useState('')
+  const [emailInputError, setEmailInputError] = useState<string | null>(null)
   const latestVendorIdRef = useRef(vendorId)
 
   useEffect(() => {
@@ -30,6 +34,8 @@ export function PurchaseOrderPanel({ vendorId, rows, canCreateOrders }: Props) {
     setComentarios('')
     setPoNum(null)
     setError(null)
+    setManualEmails([])
+    setRecipients([])
     api.cambiosFisicos
       .byVendor(vendorId)
       .then((data) => {
@@ -37,6 +43,14 @@ export function PurchaseOrderPanel({ vendorId, rows, canCreateOrders }: Props) {
       })
       .catch(() => {
         if (latestVendorIdRef.current === vendorId) setCambiosFisicos([])
+      })
+    api.purchaseOrders
+      .emailRecipients(vendorId)
+      .then((data) => {
+        if (latestVendorIdRef.current === vendorId) setRecipients(data)
+      })
+      .catch(() => {
+        if (latestVendorIdRef.current === vendorId) setRecipients([])
       })
   }, [vendorId])
 
@@ -69,6 +83,14 @@ export function PurchaseOrderPanel({ vendorId, rows, canCreateOrders }: Props) {
       }))
       const result = await api.purchaseOrders.create(vendorId, comentarios, lineas)
       if (latestVendorIdRef.current === submittedVendorId) setPoNum(result.poNum)
+
+      try {
+        await api.purchaseOrders.sendToVendor(result.poNum, vendorId, manualEmails)
+      } catch {
+        if (latestVendorIdRef.current === submittedVendorId) {
+          setError('La orden se creo, pero el correo al proveedor no se pudo enviar.')
+        }
+      }
     } catch (err) {
       if (latestVendorIdRef.current === submittedVendorId) {
         setError(err instanceof Error ? err.message : 'No se pudo crear la orden de compra.')
@@ -76,6 +98,30 @@ export function PurchaseOrderPanel({ vendorId, rows, canCreateOrders }: Props) {
     } finally {
       setSubmitting(false)
     }
+  }
+
+  const emailPattern = /^[^@\s]+@[^@\s]+\.[^@\s]+$/
+
+  function handleAddEmail() {
+    const email = newEmailInput.trim()
+    if (!emailPattern.test(email)) {
+      setEmailInputError(
+        `La direccion de email [${email}] no tiene un formato de correo valido, revise la captura e intente de nuevo.`,
+      )
+      return
+    }
+    if (manualEmails.some((e) => e.trim().toLowerCase() === email.toLowerCase())) {
+      setEmailInputError(`La direccion de email [${email}] ya existe en la lista.`)
+      return
+    }
+    setManualEmails((prev) => [...prev, email])
+    setNewEmailInput('')
+    setEmailInputError(null)
+  }
+
+  function handleRemoveEmail(email: string) {
+    if (!window.confirm(`¿Desea quitar la direccion de email [${email}] de la lista?`)) return
+    setManualEmails((prev) => prev.filter((e) => e !== email))
   }
 
   return (
@@ -192,6 +238,55 @@ export function PurchaseOrderPanel({ vendorId, rows, canCreateOrders }: Props) {
             />
           </Modal>
         )}
+
+        <div className="field">
+          <label className="field-label">Correos a los que se enviara la OC</label>
+          <div className="grid-wrap">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Tipo</th>
+                  <th>Email</th>
+                  <th aria-label="Acciones" />
+                </tr>
+              </thead>
+              <tbody>
+                {recipients.map((r) => (
+                  <tr key={`${r.tipo}-${r.email || 'sin-correo'}`}>
+                    <td>{r.tipo}</td>
+                    <td style={r.valido ? undefined : { color: 'var(--color-danger)' }}>
+                      {r.valido ? r.email : 'Sin correo capturado'}
+                    </td>
+                    <td />
+                  </tr>
+                ))}
+                {manualEmails.map((email) => (
+                  <tr key={email}>
+                    <td>INCLUIR</td>
+                    <td>{email}</td>
+                    <td>
+                      <button type="button" className="btn-link" onClick={() => handleRemoveEmail(email)}>
+                        Quitar
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="field-row" style={{ marginTop: 8 }}>
+            <input
+              type="text"
+              value={newEmailInput}
+              onChange={(e) => setNewEmailInput(e.target.value)}
+              placeholder="Incluir en correo a..."
+            />
+            <button type="button" className="btn-secondary" onClick={handleAddEmail}>
+              Añadir
+            </button>
+          </div>
+          {emailInputError && <p role="alert">{emailInputError}</p>}
+        </div>
 
         {!canCreateOrders && (
           <p role="alert">
