@@ -34,4 +34,23 @@ public interface IPurchaseOrderEmailService
         string username,
         EpicorCredentials credentials,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Recomputes the recipients from scratch (never trusts what the
+    /// browser last fetched), merges in any manually-added emails, and
+    /// queues the send with oc_tipo=1. Never throws for an empty or
+    /// all-invalid recipient list — mirrors the legacy, which always
+    /// queues the send regardless (a missing vendor email is only an
+    /// informational warning there, never a block).
+    /// </summary>
+    Task SendToVendorAsync(
+        string company,
+        string companyName,
+        string plant,
+        string vendorId,
+        string username,
+        int poNum,
+        IReadOnlyList<string> manualEmails,
+        EpicorCredentials credentials,
+        CancellationToken ct = default);
 }

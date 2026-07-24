@@ -214,4 +214,108 @@ public class PurchaseOrderEmailServiceTests
         var creador = Assert.Single(recipients, r => r.Tipo == "CREADOR");
         Assert.False(creador.Valido);
     }
+
+    private static StubEpicorClient BuildEmailServiceClient(VendorEmailsListResponse vendorEmails) => new(path =>
+    {
+        if (path.Contains("VendorSvc")) return vendorEmails;
+        if (path.Contains("POes"))
+            return new PoVendorInfoDto { VendorVendorID = "001008", VendorName = "JARAMILLO TREVIÑO GERARDO MAGDALENO" };
+        throw new InvalidOperationException($"Unexpected path: {path}");
+    });
+
+    [Fact]
+    public async Task SendToVendorAsync_InsertsAQueueEntry_WithOcTipo1AndAllValidEmailsJoined()
+    {
+        var vendorEmails = new VendorEmailsListResponse
+        {
+            Value = new List<VendorEmailsDto>
+            {
+                new() { ud_Correo1_c = "pedidos@productosdelcampo.com", ud_Correo2_c = "", ud_Correo3_c = "" }
+            }
+        };
+        var repository = new FakeEmailQueueRepository();
+        var service = new PurchaseOrderEmailService(
+            BuildEmailServiceClient(vendorEmails),
+            new StubUserDirectoryService("giovanni.montoya@carnessanjuan.com"),
+            new StubOrganizationService(new List<Plant> { new("LAF", "LA FE") }),
+            repository);
+
+        await service.SendToVendorAsync(
+            "CFSJ_LAF", "CARNES FINAS SAN JUAN LA FE", "LAF", "001008", "epicor", 3431,
+            new List<string> { "nancy.garza09@hotmail.com" }, Creds);
+
+        Assert.NotNull(repository.LastEntry);
+        Assert.Equal(1, repository.LastEntry!.OcTipo);
+        Assert.Equal("001008", repository.LastEntry.VendorId);
+        Assert.Equal("JARAMILLO TREVIÑO GERARDO MAGDALENO", repository.LastEntry.VendorName);
+        var emails = repository.LastEntry.Emails.Split(';');
+        Assert.Contains("pedidos@productosdelcampo.com", emails);
+        Assert.Contains("giovanni.montoya@carnessanjuan.com", emails);
+        Assert.Contains("nancy.garza09@hotmail.com", emails);
+        Assert.Equal(3, emails.Length);
+    }
+
+    [Fact]
+    public async Task SendToVendorAsync_SilentlyDropsAMalformedManualEmail()
+    {
+        var repository = new FakeEmailQueueRepository();
+        var service = new PurchaseOrderEmailService(
+            BuildEmailServiceClient(new VendorEmailsListResponse()),
+            new StubUserDirectoryService("giovanni.montoya@carnessanjuan.com"),
+            new StubOrganizationService(new List<Plant> { new("LAF", "LA FE") }),
+            repository);
+
+        await service.SendToVendorAsync(
+            "CFSJ_LAF", "CARNES FINAS SAN JUAN LA FE", "LAF", "001008", "epicor", 3431,
+            new List<string> { "no-es-un-correo" }, Creds);
+
+        Assert.NotNull(repository.LastEntry);
+        Assert.DoesNotContain("no-es-un-correo", repository.LastEntry!.Emails);
+    }
+
+    [Fact]
+    public async Task SendToVendorAsync_StillInsertsAQueueEntry_WhenVendorHasNoEmailsAndCreadorIsInvalid()
+    {
+        // Mirrors the legacy exactly: a missing vendor email or an invalid
+        // creador email is only an informational warning, never a block.
+        var repository = new FakeEmailQueueRepository();
+        var service = new PurchaseOrderEmailService(
+            BuildEmailServiceClient(new VendorEmailsListResponse()),
+            new StubUserDirectoryService(null),
+            new StubOrganizationService(new List<Plant> { new("LAF", "LA FE") }),
+            repository);
+
+        await service.SendToVendorAsync(
+            "CFSJ_LAF", "CARNES FINAS SAN JUAN LA FE", "LAF", "001008", "epicor", 3431,
+            new List<string>(), Creds);
+
+        Assert.NotNull(repository.LastEntry);
+        Assert.Equal(string.Empty, repository.LastEntry!.Emails);
+        Assert.Equal(1, repository.LastEntry.OcTipo);
+    }
+
+    [Fact]
+    public async Task SendToVendorAsync_DeduplicatesEmails_CaseInsensitively()
+    {
+        var vendorEmails = new VendorEmailsListResponse
+        {
+            Value = new List<VendorEmailsDto>
+            {
+                new() { ud_Correo1_c = "Nancy.Garza09@hotmail.com", ud_Correo2_c = "", ud_Correo3_c = "" }
+            }
+        };
+        var repository = new FakeEmailQueueRepository();
+        var service = new PurchaseOrderEmailService(
+            BuildEmailServiceClient(vendorEmails),
+            new StubUserDirectoryService(null),
+            new StubOrganizationService(new List<Plant> { new("LAF", "LA FE") }),
+            repository);
+
+        await service.SendToVendorAsync(
+            "CFSJ_LAF", "CARNES FINAS SAN JUAN LA FE", "LAF", "001008", "epicor", 3431,
+            new List<string> { "nancy.garza09@hotmail.com" }, Creds);
+
+        var emails = repository.LastEntry!.Emails.Split(';');
+        Assert.Single(emails);
+    }
 }

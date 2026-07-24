@@ -85,6 +85,51 @@ public sealed class PurchaseOrderEmailService : IPurchaseOrderEmailService
         return recipients;
     }
 
+    public async Task SendToVendorAsync(
+        string company,
+        string companyName,
+        string plant,
+        string vendorId,
+        string username,
+        int poNum,
+        IReadOnlyList<string> manualEmails,
+        EpicorCredentials credentials,
+        CancellationToken ct = default)
+    {
+        var recipients = await GetRecipientsAsync(company, vendorId, username, credentials, ct);
+
+        var validManual = manualEmails
+            .Where(e => !string.IsNullOrWhiteSpace(e) && EmailPattern.IsMatch(e))
+            .Select(e => e.Trim());
+
+        var allEmails = recipients
+            .Where(r => r.Valido)
+            .Select(r => r.Email)
+            .Concat(validManual)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var escapedCompany = Uri.EscapeDataString(company.Replace("'", "''"));
+        var vendorPath = $"Erp.BO.POSvc/POes('{escapedCompany}',{poNum})?$select=VendorVendorID,VendorName";
+        var vendor = await _epicor.GetAsync<PoVendorInfoDto>(company, vendorPath, credentials, ct);
+
+        var plants = await _organization.GetPlantsAsync(company, credentials, ct);
+        var plantName = plants.FirstOrDefault(p => p.PlantId == plant)?.Name ?? plant;
+
+        var entry = new EmailQueueEntry(
+            company,
+            companyName,
+            plant,
+            plantName,
+            poNum.ToString(),
+            vendor?.VendorVendorID ?? vendorId,
+            vendor?.VendorName ?? string.Empty,
+            string.Join(";", allEmails),
+            1); // oc_tipo=1: automatic send to vendor + creator on OC creation (spec section 2.4)
+
+        await _queue.InsertAsync(entry, ct);
+    }
+
     private async Task<List<string>> GetVendorEmailsAsync(
         string company, string vendorId, EpicorCredentials credentials, CancellationToken ct)
     {
