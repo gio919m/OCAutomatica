@@ -149,15 +149,41 @@ public sealed class PurchaseOrderPdfDocument : IDocument
                 });
                 row.RelativeItem().Column(right =>
                 {
-                    right.Item().AlignRight().Text($"Subtotal Linea(s): {_data.Subtotal:0.00}");
-                    right.Item().AlignRight().Text($"Impuestos: {_data.Taxes:0.00}");
-                    right.Item().AlignRight().Text($"Retenciones: {_data.Withholdings:0.00}");
-                    right.Item().AlignRight().PaddingTop(4).BorderTop(1).BorderColor(BrandRed).Text($"Total: {_data.Total:0.00}").Bold();
+                    right.Item().Row(r =>
+                    {
+                        r.RelativeItem().AlignRight().Text("Subtotal Linea(s):");
+                        r.ConstantItem(70).AlignRight().Text($"{_data.Subtotal:0.00}");
+                    });
+                    right.Item().Row(r =>
+                    {
+                        r.RelativeItem().AlignRight().Text("Impuestos:");
+                        r.ConstantItem(70).AlignRight().Text($"{_data.Taxes:0.00}");
+                    });
+                    right.Item().Row(r =>
+                    {
+                        r.RelativeItem().AlignRight().Text("Retenciones:");
+                        r.ConstantItem(70).AlignRight().Text($"{_data.Withholdings:0.00}");
+                    });
+                    right.Item().PaddingTop(2).Row(r =>
+                    {
+                        r.RelativeItem().AlignRight().Text("Subtotal de Cargos:");
+                        r.ConstantItem(70).BorderBottom(2).BorderColor(BrandRed);
+                    });
+                    right.Item().PaddingTop(2).Row(r =>
+                    {
+                        r.RelativeItem().AlignRight().Text("Total:").Bold();
+                        r.ConstantItem(70).AlignRight().Text($"{_data.Total:0.00}").Bold();
+                    });
                 });
             });
 
-            column.Item().PaddingTop(8).Text("Comentarios").Bold().Underline();
-            column.Item().Text(string.IsNullOrWhiteSpace(_data.CommentText) ? " " : _data.CommentText);
+            column.Item().PaddingTop(8).Text("Comentarios").Bold();
+            column.Item().Row(r =>
+            {
+                r.ConstantItem(320).BorderBottom(1).BorderColor(BrandRed);
+                r.RelativeItem();
+            });
+            column.Item().PaddingTop(2).Text(string.IsNullOrWhiteSpace(_data.CommentText) ? " " : _data.CommentText);
         });
     }
 
