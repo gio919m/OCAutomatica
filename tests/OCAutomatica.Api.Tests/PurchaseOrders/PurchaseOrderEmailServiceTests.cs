@@ -131,4 +131,87 @@ public class PurchaseOrderEmailServiceTests
 
         Assert.Equal("LAF", repository.LastEntry!.PlantName);
     }
+
+    [Fact]
+    public async Task GetRecipientsAsync_ReturnsProveedorRowsAndAValidCreadorRow()
+    {
+        var client = new StubEpicorClient(path =>
+        {
+            Assert.Contains("VendorSvc", path);
+            Assert.Contains("VendorID eq '001008'", path);
+            return new VendorEmailsListResponse
+            {
+                Value = new List<VendorEmailsDto>
+                {
+                    new()
+                    {
+                        ud_Correo1_c = "pedidos@productosdelcampo.com",
+                        ud_Correo2_c = "nancy.garza09@hotmail.com",
+                        ud_Correo3_c = "",
+                    }
+                }
+            };
+        });
+        var service = new PurchaseOrderEmailService(
+            client,
+            new StubUserDirectoryService("giovanni.montoya@carnessanjuan.com"),
+            new StubOrganizationService(new List<Plant> { new("LAF", "LA FE") }),
+            new FakeEmailQueueRepository());
+
+        var recipients = await service.GetRecipientsAsync("CFSJ_LAF", "001008", "epicor", Creds);
+
+        Assert.Equal(3, recipients.Count);
+        Assert.Contains(recipients, r => r.Tipo == "PROVEEDOR" && r.Email == "pedidos@productosdelcampo.com" && r.Valido);
+        Assert.Contains(recipients, r => r.Tipo == "PROVEEDOR" && r.Email == "nancy.garza09@hotmail.com" && r.Valido);
+        Assert.Contains(recipients, r => r.Tipo == "CREADOR" && r.Email == "giovanni.montoya@carnessanjuan.com" && r.Valido);
+    }
+
+    [Fact]
+    public async Task GetRecipientsAsync_SkipsBlankVendorEmailFields()
+    {
+        var client = new StubEpicorClient(_ => new VendorEmailsListResponse
+        {
+            Value = new List<VendorEmailsDto>
+            {
+                new() { ud_Correo1_c = "", ud_Correo2_c = "", ud_Correo3_c = "" }
+            }
+        });
+        var service = new PurchaseOrderEmailService(
+            client, new StubUserDirectoryService("epicor@carnessanjuan.com"),
+            new StubOrganizationService(new List<Plant>()), new FakeEmailQueueRepository());
+
+        var recipients = await service.GetRecipientsAsync("CFSJ_LAF", "001008", "epicor", Creds);
+
+        Assert.DoesNotContain(recipients, r => r.Tipo == "PROVEEDOR");
+        Assert.Single(recipients); // just CREADOR
+    }
+
+    [Fact]
+    public async Task GetRecipientsAsync_MarksCreadorInvalid_WhenUserHasNoEmailCaptured()
+    {
+        var client = new StubEpicorClient(_ => new VendorEmailsListResponse());
+        var service = new PurchaseOrderEmailService(
+            client, new StubUserDirectoryService(null),
+            new StubOrganizationService(new List<Plant>()), new FakeEmailQueueRepository());
+
+        var recipients = await service.GetRecipientsAsync("CFSJ_LAF", "001008", "epicor", Creds);
+
+        var creador = Assert.Single(recipients, r => r.Tipo == "CREADOR");
+        Assert.False(creador.Valido);
+        Assert.Equal(string.Empty, creador.Email);
+    }
+
+    [Fact]
+    public async Task GetRecipientsAsync_MarksCreadorInvalid_WhenUserEmailIsMalformed()
+    {
+        var client = new StubEpicorClient(_ => new VendorEmailsListResponse());
+        var service = new PurchaseOrderEmailService(
+            client, new StubUserDirectoryService("no-es-un-correo"),
+            new StubOrganizationService(new List<Plant>()), new FakeEmailQueueRepository());
+
+        var recipients = await service.GetRecipientsAsync("CFSJ_LAF", "001008", "epicor", Creds);
+
+        var creador = Assert.Single(recipients, r => r.Tipo == "CREADOR");
+        Assert.False(creador.Valido);
+    }
 }
