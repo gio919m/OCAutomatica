@@ -36,6 +36,8 @@ public sealed class PurchaseOrdersController : ControllerBase
     public sealed record CreatePurchaseOrderApiRequest(
         string VendorId, string? Comentarios, List<PurchaseOrderLine>? Lineas);
 
+    public sealed record SendToVendorApiRequest(string VendorId, List<string>? ManualEmails);
+
     [HttpPost]
     public async Task<IActionResult> Create(
         [FromBody] CreatePurchaseOrderApiRequest request, CancellationToken ct)
@@ -103,6 +105,34 @@ public sealed class PurchaseOrdersController : ControllerBase
         {
             _logger.LogError(ex,
                 "Epicor error ({Reason}) while listing purchase orders for vendor {VendorId} on {Company}",
+                ex.Reason, vendorId, session.Company);
+            return HandleEpicorException(ex);
+        }
+    }
+
+    [HttpGet("email-recipients")]
+    public async Task<IActionResult> GetEmailRecipients(
+        [FromQuery] string vendorId, CancellationToken ct)
+    {
+        if (HttpContext.Items[SessionMiddleware.ItemKey] is not UserSession session)
+            return Unauthorized();
+
+        var credentials = _sessions.GetCredentials(session.SessionId);
+        if (credentials is null) return Unauthorized();
+
+        if (string.IsNullOrWhiteSpace(vendorId))
+            return BadRequest(new { message = "Es necesario indicar un proveedor." });
+
+        try
+        {
+            var recipients = await _emailService.GetRecipientsAsync(
+                session.Company, vendorId, session.Username, credentials, ct);
+            return Ok(recipients);
+        }
+        catch (EpicorException ex)
+        {
+            _logger.LogError(ex,
+                "Epicor error ({Reason}) while fetching email recipients for vendor {VendorId} on {Company}",
                 ex.Reason, vendorId, session.Company);
             return HandleEpicorException(ex);
         }
@@ -190,6 +220,38 @@ public sealed class PurchaseOrdersController : ControllerBase
         {
             _logger.LogError(ex,
                 "Epicor error ({Reason}) while sending a PO copy email for PO {PoNum} on {Company}",
+                ex.Reason, poNum, session.Company);
+            return HandleEpicorException(ex);
+        }
+    }
+
+    [HttpPost("{poNum:int}/send-to-vendor")]
+    public async Task<IActionResult> SendToVendor(
+        int poNum, [FromBody] SendToVendorApiRequest request, CancellationToken ct)
+    {
+        if (HttpContext.Items[SessionMiddleware.ItemKey] is not UserSession session)
+            return Unauthorized();
+
+        var credentials = _sessions.GetCredentials(session.SessionId);
+        if (credentials is null) return Unauthorized();
+
+        if (string.IsNullOrWhiteSpace(request.VendorId))
+            return BadRequest(new { message = "Es necesario indicar un proveedor." });
+
+        var companyName = session.AvailableCompanies
+            .FirstOrDefault(c => c.Company == session.Company)?.CompanyName ?? session.Company;
+
+        try
+        {
+            await _emailService.SendToVendorAsync(
+                session.Company, companyName, session.Plant, request.VendorId, session.Username, poNum,
+                request.ManualEmails ?? new List<string>(), credentials, ct);
+            return Ok();
+        }
+        catch (EpicorException ex)
+        {
+            _logger.LogError(ex,
+                "Epicor error ({Reason}) while sending the vendor email for PO {PoNum} on {Company}",
                 ex.Reason, poNum, session.Company);
             return HandleEpicorException(ex);
         }
