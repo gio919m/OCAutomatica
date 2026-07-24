@@ -12,5 +12,11 @@
     <PackageReference Include="QuestPDF" Version="2026.7.1" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Content (not None) so this also lands in the test project's output
+         directory via its ProjectReference — PurchaseOrderPdfDocumentTests
+         loads the same file. -->
+    <Content Include="Resources\logo-cfsj.jpg" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 
 </Project>

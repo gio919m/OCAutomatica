@@ -6,6 +6,12 @@ namespace OCAutomatica.Api.PurchaseOrders;
 
 public sealed class PurchaseOrderPdfDocument : IDocument
 {
+    // Brand red, same value used throughout the web app (index.css --color-primary).
+    private const string BrandRed = "#D81F2A";
+
+    private static readonly byte[] LogoBytes = File.ReadAllBytes(
+        Path.Combine(AppContext.BaseDirectory, "Resources", "logo-cfsj.jpg"));
+
     private readonly PurchaseOrderReportData _data;
 
     public PurchaseOrderPdfDocument(PurchaseOrderReportData data) => _data = data;
@@ -40,16 +46,27 @@ public sealed class PurchaseOrderPdfDocument : IDocument
 
             column.Item().Row(row =>
             {
-                row.RelativeItem().Text("ORDEN DE COMPRA").Bold().FontSize(14);
-                row.ConstantItem(80).AlignRight().Text(_data.Approved ? "APROBADA" : "NO APROBADA").Bold();
+                row.ConstantItem(130).Height(75).Image(LogoBytes).FitArea();
+                row.RelativeItem().Column(title =>
+                {
+                    title.Item().BorderBottom(2).BorderColor(BrandRed).PaddingBottom(2)
+                        .AlignCenter().Text("ORDEN DE COMPRA").Bold().FontSize(14).FontColor(BrandRed);
+                    title.Item().AlignCenter().Text($"{_data.CompanyName} {_data.PlantName}").Bold();
+                });
+                row.ConstantItem(90).AlignRight().Column(stamp =>
+                {
+                    stamp.Item().AlignRight().Text("Fecha Impresion:").FontSize(7);
+                    stamp.Item().AlignRight().Text($"{_data.PrintedAt:dd/MM/yyyy}  {_data.PrintedAt:hh:mm}tt").FontSize(7);
+                    stamp.Item().PaddingTop(4).AlignRight()
+                        .Text(_data.Approved ? "APROBADA" : "NO APROBADA").Bold();
+                });
             });
-            column.Item().Text($"Fecha Impresion: {_data.PrintedAt:dd/MM/yyyy} {_data.PrintedAt:hh:mm}tt").FontSize(8);
-            column.Item().Text($"{_data.CompanyName} {_data.PlantName}").Bold();
+
             column.Item().Text($"Orden de Compra: {_data.PoNum}").Bold();
 
             column.Item().Row(row =>
             {
-                row.RelativeItem().Border(1).Padding(6).Column(box =>
+                row.RelativeItem().Border(1).BorderColor(BrandRed).Padding(6).Column(box =>
                 {
                     box.Item().Text($"Proveedor:  {_data.VendorId}").Bold();
                     box.Item().Text(_data.VendorName);
@@ -57,14 +74,14 @@ public sealed class PurchaseOrderPdfDocument : IDocument
                     box.Item().Text(_data.VendorAddress2);
                     box.Item().Text(_data.VendorCity);
                 });
-                row.RelativeItem().Border(1).Padding(6).Column(box =>
+                row.RelativeItem().Border(1).BorderColor(BrandRed).Padding(6).Column(box =>
                 {
                     box.Item().Text("Domicilio de Entrega:").Bold();
                     box.Item().Text(_data.DeliveryAddress);
                 });
             });
 
-            column.Item().Border(1).Padding(6).Row(row =>
+            column.Item().Border(1).BorderColor(BrandRed).Padding(6).Row(row =>
             {
                 row.RelativeItem().Text($"Entrega: {_data.ShipViaDescription}").Bold();
                 row.RelativeItem().Text($"Fecha de Orden: {_data.OrderDate:yyyy-MM-dd}").Bold();
@@ -96,7 +113,7 @@ public sealed class PurchaseOrderPdfDocument : IDocument
                 header.Cell().Text("UOM").Bold();
                 header.Cell().AlignRight().Text("Precio Unit").Bold();
                 header.Cell().AlignRight().Text("Precio Ext").Bold();
-                header.Cell().ColumnSpan(7).PaddingTop(2).BorderBottom(1);
+                header.Cell().ColumnSpan(7).PaddingTop(2).BorderBottom(1).BorderColor(BrandRed);
             });
 
             foreach (var line in _data.Lines)
@@ -134,7 +151,7 @@ public sealed class PurchaseOrderPdfDocument : IDocument
                     right.Item().AlignRight().Text($"Subtotal Linea(s): {_data.Subtotal:0.00}");
                     right.Item().AlignRight().Text($"Impuestos: {_data.Taxes:0.00}");
                     right.Item().AlignRight().Text($"Retenciones: {_data.Withholdings:0.00}");
-                    right.Item().AlignRight().PaddingTop(4).BorderTop(1).Text($"Total: {_data.Total:0.00}").Bold();
+                    right.Item().AlignRight().PaddingTop(4).BorderTop(1).BorderColor(BrandRed).Text($"Total: {_data.Total:0.00}").Bold();
                 });
             });
 
@@ -163,7 +180,7 @@ public sealed class PurchaseOrderPdfDocument : IDocument
                     text.TotalPages();
                 });
             });
-            column.Item().BorderTop(1);
+            column.Item().BorderTop(1).BorderColor(BrandRed);
 
             column.Item().Text("-Direccion de envió de archivos electronicos: recepcion@buzonfiscal.com.").FontSize(7);
             column.Item().Text("-Es necesario que toda factura de orden de compra recibida por CFSJ, se envie al correo antes mencionado para que proceda el pago de la misma.").FontSize(7);
