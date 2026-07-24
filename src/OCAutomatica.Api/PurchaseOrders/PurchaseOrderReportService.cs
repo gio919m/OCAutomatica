@@ -93,8 +93,19 @@ public sealed class PurchaseOrderReportService : IPurchaseOrderReportService
     {
         var escaped = Uri.EscapeDataString(vendorId.Replace("'", "''"));
         var path = $"Erp.BO.VendorSvc/Vendors?$filter=VendorID eq '{escaped}'&$select=Address1,Address2,City&$top=1";
-        var response = await _epicor.GetAsync<VendorAddressListResponse>(company, path, credentials, ct);
-        return response?.Value.FirstOrDefault();
+        try
+        {
+            var response = await _epicor.GetAsync<VendorAddressListResponse>(company, path, credentials, ct);
+            return response?.Value.FirstOrDefault();
+        }
+        catch (EpicorException)
+        {
+            // Secondary, non-essential field for the report — a permissions
+            // gap on this one BO (varies per Epicor user/security config,
+            // confirmed live) must not block the whole PDF. Falls back to
+            // blank rather than surfacing a misleading error to the buyer.
+            return null;
+        }
     }
 
     private async Task<CompanyAddressDto?> GetCompanyAddressAsync(
@@ -105,8 +116,15 @@ public sealed class PurchaseOrderReportService : IPurchaseOrderReportService
         // Erp.Plant) — confirmed live via Swagger's keyed route
         // Companies('{Company1}'), not "Company" as the raw SQL column is named.
         var path = $"Erp.BO.CompanySvc/Companies?$filter=Company1 eq '{escaped}'&$select=Address1,Address2,City,State,Zip,StateTaxID&$top=1";
-        var response = await _epicor.GetAsync<CompanyAddressListResponse>(company, path, credentials, ct);
-        return response?.Value.FirstOrDefault();
+        try
+        {
+            var response = await _epicor.GetAsync<CompanyAddressListResponse>(company, path, credentials, ct);
+            return response?.Value.FirstOrDefault();
+        }
+        catch (EpicorException)
+        {
+            return null;
+        }
     }
 
     private async Task<PlantDetailsDto?> GetPlantDetailsAsync(
@@ -114,8 +132,15 @@ public sealed class PurchaseOrderReportService : IPurchaseOrderReportService
     {
         var escaped = Uri.EscapeDataString(plant.Replace("'", "''"));
         var path = $"Erp.BO.PlantSvc/Plants?$filter=Plant1 eq '{escaped}'&$select=Name,PhoneNum&$top=1";
-        var response = await _epicor.GetAsync<PlantDetailsListResponse>(company, path, credentials, ct);
-        return response?.Value.FirstOrDefault();
+        try
+        {
+            var response = await _epicor.GetAsync<PlantDetailsListResponse>(company, path, credentials, ct);
+            return response?.Value.FirstOrDefault();
+        }
+        catch (EpicorException)
+        {
+            return null;
+        }
     }
 
     private async Task<ShipViaDto?> GetShipViaAsync(
@@ -123,8 +148,22 @@ public sealed class PurchaseOrderReportService : IPurchaseOrderReportService
     {
         var escaped = Uri.EscapeDataString(shipViaCode.Replace("'", "''"));
         var path = $"Erp.BO.ShipViaSvc/ShipVias?$filter=ShipViaCode eq '{escaped}'&$select=Description&$top=1";
-        var response = await _epicor.GetAsync<ShipViaListResponse>(company, path, credentials, ct);
-        return response?.Value.FirstOrDefault();
+        try
+        {
+            var response = await _epicor.GetAsync<ShipViaListResponse>(company, path, credentials, ct);
+            return response?.Value.FirstOrDefault();
+        }
+        catch (EpicorException)
+        {
+            // Confirmed live: this call gets "Access denied" even though the
+            // logged-in user can browse the same ShipVia catalog fine in the
+            // native Kinetic UI — this is the REST API key's own Access
+            // Scope (a separate layer from user security, see the
+            // OCA_CambiosFisicos BAQ note in Plan 3), not a user permission
+            // gap. Falls back to blank either way, matching the other
+            // secondary lookups above, until the scope is widened.
+            return null;
+        }
     }
 
     private async Task<Dictionary<(string PartNum, string Uom), string>> GetEanCodesAsync(
@@ -146,10 +185,16 @@ public sealed class PurchaseOrderReportService : IPurchaseOrderReportService
 
         var path = $"Erp.BO.PartSvc/PartPCs?$filter=PCType eq 'EAN-13' and ({string.Join(" or ", filterClauses)})" +
             "&$select=PartNum,UOMCode,PRODCODE";
-        var response = await _epicor.GetAsync<PartEanListResponse>(company, path, credentials, ct);
-
-        return (response?.Value ?? new List<PartEanDto>())
-            .ToDictionary(e => (e.PartNum, e.UOMCode), e => e.PRODCODE);
+        try
+        {
+            var response = await _epicor.GetAsync<PartEanListResponse>(company, path, credentials, ct);
+            return (response?.Value ?? new List<PartEanDto>())
+                .ToDictionary(e => (e.PartNum, e.UOMCode), e => e.PRODCODE);
+        }
+        catch (EpicorException)
+        {
+            return new();
+        }
     }
 
     private static string BuildDeliveryAddress(

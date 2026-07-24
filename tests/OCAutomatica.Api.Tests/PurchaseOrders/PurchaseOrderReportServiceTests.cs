@@ -110,6 +110,33 @@ public class PurchaseOrderReportServiceTests
     }
 
     [Fact]
+    public async Task GetReportDataAsync_FallsBackToBlank_WhenASecondaryLookupIsAccessDenied()
+    {
+        // Confirmed live: a secondary BO (e.g. Erp.BO.ShipVia) can be
+        // outside the REST API key's Access Scope even when the user can
+        // browse the same catalog fine in the native Kinetic UI. Either
+        // way, a gap on one secondary field must not block the whole
+        // report - the endpoint used to 503 entirely on this before the fix.
+        var client = new StubEpicorClient(path =>
+        {
+            if (path.Contains("POes")) return BuildHeader();
+            if (path.Contains("ShipViaSvc"))
+                throw new EpicorException(401, EpicorErrorReason.AccessDenied, "Access denied (Erp.BO.ShipVia.GetRows).");
+            if (path.Contains("VendorSvc")) return new VendorAddressListResponse();
+            if (path.Contains("CompanySvc")) return new CompanyAddressListResponse();
+            if (path.Contains("PlantSvc")) return new PlantDetailsListResponse();
+            if (path.Contains("PartPCs")) return new PartEanListResponse();
+            throw new InvalidOperationException($"Unexpected path: {path}");
+        });
+        var service = new PurchaseOrderReportService(client, new StubUserDirectoryService(null), July2026);
+
+        var data = await service.GetReportDataAsync("CFSJ_LAF", "CARNES FINAS SAN JUAN", "LAF", 3431, "epicor", Creds);
+
+        Assert.NotNull(data);
+        Assert.Equal(string.Empty, data!.ShipViaDescription);
+    }
+
+    [Fact]
     public async Task GetReportDataAsync_BuildsTheFullReportFromAllSources()
     {
         var service = new PurchaseOrderReportService(
