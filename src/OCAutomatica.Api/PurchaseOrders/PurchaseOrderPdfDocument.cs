@@ -51,7 +51,8 @@ public sealed class PurchaseOrderPdfDocument : IDocument
                 {
                     title.Item().BorderBottom(2).BorderColor(BrandRed).PaddingBottom(2)
                         .AlignCenter().Text("ORDEN DE COMPRA").Bold().FontSize(14).FontColor(BrandRed);
-                    title.Item().AlignCenter().Text($"{_data.CompanyName} {_data.PlantName}").Bold();
+                    title.Item().AlignCenter().Text(_data.CompanyName).Bold();
+                    title.Item().AlignCenter().Text($"Sucursal: {_data.PlantName}").FontSize(9);
                 });
                 row.ConstantItem(90).AlignRight().Column(stamp =>
                 {
