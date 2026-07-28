@@ -15,5 +15,13 @@ public sealed record EpicorCredentials(string Username, string Password)
     /// </summary>
     public string? EpicorSessionId { get; init; }
 
+    /// <summary>
+    /// When set, AddAuthHeaders sends this as "Authorization: Bearer &lt;token&gt;"
+    /// instead of building Basic Auth from Username/Password. Set only for
+    /// sessions that started via Epicor Kinetic SSO — the manual-login path
+    /// never sets it.
+    /// </summary>
+    public string? BearerToken { get; init; }
+
     public override string ToString() => $"EpicorCredentials {{ Username = {Username} }}";
 }

@@ -293,4 +293,44 @@ public class EpicorClientTests
         Assert.Equal(EpicorErrorReason.Other, ex.Reason);
         Assert.Equal("Part is required.", ex.Message);
     }
+
+    [Fact]
+    public async Task GetAsync_SendsBearerAuth_InsteadOfBasic_WhenBearerTokenIsSet()
+    {
+        var handler = new FakeHttpMessageHandler(
+            HttpStatusCode.OK, """{"Value":[]}""");
+        var client = BuildClient(handler);
+
+        await client.GetAsync<ODataList<Company>>(
+            "CFSJ_LAF",
+            "Erp.BO.CompanySvc/Companies",
+            new EpicorCredentials("epicor", string.Empty) { BearerToken = "header.payload.signature" });
+
+        var request = handler.LastRequest!;
+        Assert.Equal("Bearer", request.Headers.Authorization!.Scheme);
+        Assert.Equal("header.payload.signature", request.Headers.Authorization.Parameter);
+        Assert.Equal("test-api-key", request.Headers.GetValues("x-api-key").Single());
+    }
+
+    [Fact]
+    public async Task GetAsync_StillSendsBasicAuth_WhenBearerTokenIsNotSet()
+    {
+        // Regression guard: the manual-login path (no BearerToken) must
+        // behave exactly as before this task.
+        var handler = new FakeHttpMessageHandler(
+            HttpStatusCode.OK, """{"Value":[]}""");
+        var client = BuildClient(handler);
+
+        await client.GetAsync<ODataList<Company>>(
+            "CFSJ_LAF",
+            "Erp.BO.CompanySvc/Companies",
+            new EpicorCredentials("jyanez", "secreto"));
+
+        var request = handler.LastRequest!;
+        var expectedAuth = Convert.ToBase64String(
+            System.Text.Encoding.UTF8.GetBytes("jyanez:secreto"));
+
+        Assert.Equal("Basic", request.Headers.Authorization!.Scheme);
+        Assert.Equal(expectedAuth, request.Headers.Authorization.Parameter);
+    }
 }
