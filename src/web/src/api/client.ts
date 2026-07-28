@@ -141,6 +141,12 @@ export const api = {
 
   me: () => request<Session>('/api/auth/me'),
 
+  ssoLogin: (token: string, company?: string, site?: string) =>
+    request<Session>('/api/auth/sso-login', {
+      method: 'POST',
+      body: JSON.stringify({ token, company: company ?? null, site: site ?? null }),
+    }),
+
   plants: () => request<Plant[]>('/api/organization/plants'),
 
   setContext: (plant: string) =>

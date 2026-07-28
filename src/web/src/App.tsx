@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { type Context, type Vendor } from './api/client'
+import { useEffect, useState } from 'react'
+import { api, type Context, type Vendor } from './api/client'
 import { LoginPage } from './auth/LoginPage'
 import { CompanyPicker } from './auth/CompanyPicker'
 import { ContextPicker } from './auth/ContextPicker'
@@ -34,11 +34,23 @@ function Step({
 }
 
 export default function App() {
-  const { session, setSession, loading, signOut } = useSession()
+  const { session, setSession, loading, signOut, ssoSite } = useSession()
   const [context, setContext] = useState<Context | null>(null)
   const [vendor, setVendor] = useState<Vendor | null>(null)
   const [rows, setRows] = useState<PartRowState[]>([])
   const [activeTab, setActiveTab] = useState<'nueva' | 'historial'>('nueva')
+
+  useEffect(() => {
+    if (!session?.company || !ssoSite || context) return
+
+    api
+      .setContext(ssoSite)
+      .then(setContext)
+      .catch(() => {
+        // The site hint from Kinetic isn't a valid plant for this user/company
+        // — fall through to the normal ContextPicker, no error shown.
+      })
+  }, [session?.company, ssoSite, context])
 
   if (loading) return <div className="page-loading">Cargando...</div>
 
