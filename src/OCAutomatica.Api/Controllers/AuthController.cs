@@ -9,6 +9,7 @@ namespace OCAutomatica.Api.Controllers;
 public sealed class AuthController : ControllerBase
 {
     public sealed record LoginRequest(string Username, string Password);
+    public sealed record SsoLoginRequest(string Token, string? Company, string? Site);
     public sealed record SelectCompanyRequest(string Company);
     public sealed record CompanyOption(string Company, string CompanyName);
     public sealed record SessionResponse(
@@ -22,17 +23,20 @@ public sealed class AuthController : ControllerBase
     private readonly IAuthService _auth;
     private readonly ISessionStore _sessions;
     private readonly IEpicorClient _epicor;
+    private readonly IEpicorTokenService _tokens;
     private readonly ILogger<AuthController> _logger;
 
     public AuthController(
         IAuthService auth,
         ISessionStore sessions,
         IEpicorClient epicor,
+        IEpicorTokenService tokens,
         ILogger<AuthController> logger)
     {
         _auth = auth;
         _sessions = sessions;
         _epicor = epicor;
+        _tokens = tokens;
         _logger = logger;
     }
 
@@ -107,6 +111,104 @@ public sealed class AuthController : ControllerBase
 
         return Ok(new SessionResponse(
             request.Username,
+            selectedCompany,
+            string.Empty,
+            null,
+            null,
+            companies.Select(c => new CompanyOption(c.Company, c.CompanyName)).ToList()));
+    }
+
+    [HttpPost("sso-login")]
+    public async Task<IActionResult> SsoLogin(SsoLoginRequest request, CancellationToken ct)
+    {
+        if (!_tokens.TryValidate(request.Token, out var username))
+        {
+            return Unauthorized(new { message = "Token de Epicor invalido o expirado." });
+        }
+
+        var originalCredentials = new EpicorCredentials(username, string.Empty)
+        {
+            BearerToken = request.Token
+        };
+
+        IReadOnlyList<CompanyAccess>? companies;
+        try
+        {
+            companies = await _auth.ValidateAsync(originalCredentials, ct);
+        }
+        catch (EpicorException ex)
+        {
+            _logger.LogError(ex,
+                "Epicor error ({Reason}) while validating SSO token for {Username}",
+                ex.Reason, username);
+
+            var message = ex.Reason switch
+            {
+                EpicorErrorReason.InvalidApiKey =>
+                    "La aplicacion no pudo autenticarse con Epicor (clave de API invalida). Avisa a sistemas.",
+                EpicorErrorReason.AccessDenied =>
+                    "Tu usuario de Epicor no tiene permiso para consultar sus companias. Pide que revisen tu perfil de seguridad en Epicor.",
+                _ =>
+                    "No se pudo contactar a Epicor. Intenta de nuevo o avisa a sistemas."
+            };
+
+            return StatusCode(503, new { message });
+        }
+
+        if (companies is null)
+        {
+            _logger.LogWarning("Rejected SSO login for {Username} (Epicor did not accept the token)", username);
+            return Unauthorized(new { message = "Token de Epicor invalido o expirado." });
+        }
+
+        if (companies.Count == 0)
+        {
+            _logger.LogWarning("User {Username} has no companies assigned in Epicor", username);
+            return StatusCode(403, new
+            {
+                message = "Tu usuario no tiene companias asignadas en Epicor. Contacta a sistemas."
+            });
+        }
+
+        var renewedToken = _tokens.IssueSessionToken(username);
+        var credentials = new EpicorCredentials(username, string.Empty) { BearerToken = renewedToken };
+
+        var sessionId = _sessions.Create(credentials);
+        _sessions.SetAvailableCompanies(sessionId, companies);
+
+        // The URL's company param is client-supplied and must be validated
+        // against the user's real Epicor companies before trusting it — an
+        // explicitly requested company that doesn't match must leave the
+        // session with no company selected (same as today's multi-company
+        // login with no selection), never silently fall back to a different
+        // company just because the user happens to only have one.
+        var urlCompanyIsValid = !string.IsNullOrEmpty(request.Company) &&
+            companies.Any(c => c.Company == request.Company);
+        var selectedCompany = urlCompanyIsValid
+            ? request.Company!
+            : string.IsNullOrEmpty(request.Company) && companies.Count == 1
+                ? companies[0].Company
+                : string.Empty;
+        _sessions.SetContext(sessionId, selectedCompany, string.Empty, null);
+
+        if (selectedCompany.Length > 0)
+        {
+            await EstablishEpicorSessionAsync(sessionId, selectedCompany, credentials, ct);
+        }
+
+        Response.Cookies.Append(SessionMiddleware.CookieName, sessionId, new CookieOptions
+        {
+            HttpOnly = true,
+            Secure = true,
+            SameSite = SameSiteMode.Strict,
+            MaxAge = TimeSpan.FromHours(8)
+        });
+
+        _logger.LogInformation("SSO login succeeded for {Username} ({CompanyCount} companies)",
+            username, companies.Count);
+
+        return Ok(new SessionResponse(
+            username,
             selectedCompany,
             string.Empty,
             null,

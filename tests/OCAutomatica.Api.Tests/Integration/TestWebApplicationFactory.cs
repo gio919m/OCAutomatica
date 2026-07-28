@@ -13,6 +13,9 @@ namespace OCAutomatica.Api.Tests.Integration;
 /// </summary>
 public sealed class TestWebApplicationFactory : WebApplicationFactory<Program>
 {
+    // Arbitrary Base64 test value — never the real Epicor Sign Key.
+    public const string SsoSignKey = "dGVzdC1zc28tc2lnbi1rZXktZm9yLWludGVncmF0aW9uLXRlc3Rz";
+
     public TestEpicorClient EpicorClient { get; } = new();
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -21,6 +24,11 @@ public sealed class TestWebApplicationFactory : WebApplicationFactory<Program>
         {
             services.RemoveAll(typeof(IEpicorClient));
             services.AddSingleton<IEpicorClient>(EpicorClient);
+            services.Configure<EpicorTokenOptions>(o =>
+            {
+                o.SignKey = SsoSignKey;
+                o.SessionLifetimeSeconds = 28800;
+            });
         });
     }
 

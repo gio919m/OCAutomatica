@@ -1,5 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Security.Cryptography;
+using System.Text;
 using OCAutomatica.Api.Auth;
 using OCAutomatica.Api.Epicor;
 
@@ -267,6 +269,150 @@ public class AuthEndpointsTests
         var logoutResponse = await client.PostAsync("/api/auth/logout", null);
 
         Assert.Equal(HttpStatusCode.NoContent, logoutResponse.StatusCode);
+    }
+
+    private static string Base64UrlEncode(byte[] bytes) =>
+        Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+
+    /// <summary>Builds a raw JWT exactly like Epicor's Token Authentication
+    /// would, independently of EpicorTokenService — so these tests exercise
+    /// the endpoint against an input shaped like the real thing, not against
+    /// the service's own encoder.</summary>
+    private static string BuildKineticToken(
+        string username, string signKey, DateTimeOffset issuedAt, int lifetimeSeconds = 3600)
+    {
+        var iat = issuedAt.ToUnixTimeSeconds();
+        var exp = iat + lifetimeSeconds;
+        var header = Base64UrlEncode(Encoding.UTF8.GetBytes("""{"alg":"HS256","typ":"JWT"}"""));
+        var payloadJson =
+            $$"""{"exp":"{{exp}}","iat":"{{iat}}","iss":"epicor","aud":"epicor","username":"{{username}}"}""";
+        var payload = Base64UrlEncode(Encoding.UTF8.GetBytes(payloadJson));
+        var signingInput = Encoding.UTF8.GetBytes($"{header}.{payload}");
+        using var hmac = new HMACSHA256(Convert.FromBase64String(signKey));
+        var signature = Base64UrlEncode(hmac.ComputeHash(signingInput));
+        return $"{header}.{payload}.{signature}";
+    }
+
+    [Fact]
+    public async Task SsoLogin_ReturnsSessionAndSetsCookie_WhenTokenIsValid()
+    {
+        using var factory = new TestWebApplicationFactory();
+        factory.EpicorClient.OnGet = (_, _, _) => new UserCompListResponse
+        {
+            Value = new List<UserCompDto>
+            {
+                new() { Company = "CFSJ_LAF", CompanyName = "Carnes Finas San Juan Laredo" }
+            }
+        };
+
+        var token = BuildKineticToken("epicor", TestWebApplicationFactory.SsoSignKey, DateTimeOffset.UtcNow);
+
+        using var client = factory.CreateSecureClient();
+        var response = await client.PostAsJsonAsync("/api/auth/sso-login",
+            new { token, company = "CFSJ_LAF", site = (string?)null });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.True(response.Headers.Contains("Set-Cookie"));
+
+        var body = await response.Content.ReadFromJsonAsync<LoginResponseBody>();
+        Assert.Equal("epicor", body!.Username);
+        Assert.Equal("CFSJ_LAF", body.Company);
+    }
+
+    [Fact]
+    public async Task SsoLogin_ReturnsUnauthorized_WhenTokenSignatureIsInvalid()
+    {
+        using var factory = new TestWebApplicationFactory();
+        var token = BuildKineticToken("epicor", "aW52YWxpZC1rZXktbm90LW1hdGNoaW5nLXNlcnZlcg==", DateTimeOffset.UtcNow);
+
+        using var client = factory.CreateSecureClient();
+        var response = await client.PostAsJsonAsync("/api/auth/sso-login",
+            new { token, company = (string?)null, site = (string?)null });
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task SsoLogin_ReturnsUnauthorized_WhenTokenIsExpired()
+    {
+        using var factory = new TestWebApplicationFactory();
+        var token = BuildKineticToken(
+            "epicor", TestWebApplicationFactory.SsoSignKey,
+            DateTimeOffset.UtcNow.AddHours(-2), lifetimeSeconds: 3600);
+
+        using var client = factory.CreateSecureClient();
+        var response = await client.PostAsJsonAsync("/api/auth/sso-login",
+            new { token, company = (string?)null, site = (string?)null });
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task SsoLogin_LeavesCompanyUnset_WhenUrlCompanyIsNotAssignedToTheUser()
+    {
+        using var factory = new TestWebApplicationFactory();
+        factory.EpicorClient.OnGet = (_, _, _) => new UserCompListResponse
+        {
+            Value = new List<UserCompDto>
+            {
+                new() { Company = "CFSJ_LAF", CompanyName = "Carnes Finas San Juan Laredo" }
+            }
+        };
+        var token = BuildKineticToken("epicor", TestWebApplicationFactory.SsoSignKey, DateTimeOffset.UtcNow);
+
+        using var client = factory.CreateSecureClient();
+        var response = await client.PostAsJsonAsync("/api/auth/sso-login",
+            new { token, company = "CFSJ_ANA", site = (string?)null });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<LoginResponseBody>();
+        Assert.Equal(string.Empty, body!.Company);
+    }
+
+    [Fact]
+    public async Task SsoLogin_QueriesCompaniesUsingBearerAuth_WithTheOriginalToken()
+    {
+        using var factory = new TestWebApplicationFactory();
+        string? capturedBearer = null;
+        factory.EpicorClient.OnGet = (_, _, credentials) =>
+        {
+            capturedBearer = credentials.BearerToken;
+            return new UserCompListResponse
+            {
+                Value = new List<UserCompDto> { new() { Company = "CFSJ_LAF", CompanyName = "LA FE" } }
+            };
+        };
+        var token = BuildKineticToken("epicor", TestWebApplicationFactory.SsoSignKey, DateTimeOffset.UtcNow);
+
+        using var client = factory.CreateSecureClient();
+        await client.PostAsJsonAsync("/api/auth/sso-login",
+            new { token, company = "CFSJ_LAF", site = (string?)null });
+
+        Assert.Equal(token, capturedBearer);
+    }
+
+    [Fact]
+    public async Task SsoLogin_EstablishesTheEpicorSession_WithARenewedTokenDifferentFromTheOriginal()
+    {
+        using var factory = new TestWebApplicationFactory();
+        factory.EpicorClient.OnGet = (_, _, _) => new UserCompListResponse
+        {
+            Value = new List<UserCompDto> { new() { Company = "CFSJ_LAF", CompanyName = "LA FE" } }
+        };
+        string? renewedBearer = null;
+        factory.EpicorClient.OnPost = (_, relativePath, _, credentials) =>
+        {
+            if (relativePath == "Ice.Lib.SessionModSvc/Login") renewedBearer = credentials.BearerToken;
+            return null;
+        };
+        var originalToken = BuildKineticToken("epicor", TestWebApplicationFactory.SsoSignKey, DateTimeOffset.UtcNow);
+
+        using var client = factory.CreateSecureClient();
+        await client.PostAsJsonAsync("/api/auth/sso-login",
+            new { token = originalToken, company = "CFSJ_LAF", site = (string?)null });
+
+        Assert.NotNull(renewedBearer);
+        Assert.NotEqual(originalToken, renewedBearer);
     }
 
     private sealed record CompanyOptionBody(string Company, string CompanyName);
