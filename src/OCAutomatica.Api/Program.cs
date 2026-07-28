@@ -23,6 +23,8 @@ builder.Services.Configure<EpicorOptions>(
     builder.Configuration.GetSection(EpicorOptions.SectionName));
 builder.Services.Configure<EmailQueueOptions>(
     builder.Configuration.GetSection(EmailQueueOptions.SectionName));
+builder.Services.Configure<EpicorTokenOptions>(
+    builder.Configuration.GetSection(EpicorTokenOptions.SectionName));
 
 builder.Services.AddHttpClient<IEpicorClient, EpicorClient>();
 
@@ -37,6 +39,7 @@ builder.Services.AddScoped<IPurchaseOrderHistoryService, PurchaseOrderHistorySer
 builder.Services.AddScoped<IUserDirectoryService, UserDirectoryService>();
 builder.Services.AddScoped<IVendorService, VendorService>();
 builder.Services.AddScoped<IEmailQueueRepository, EmailQueueRepository>();
+builder.Services.AddSingleton<IEpicorTokenService, EpicorTokenService>();
 builder.Services.AddScoped<IPurchaseOrderReportService, PurchaseOrderReportService>();
 builder.Services.AddScoped<IPurchaseOrderEmailService, PurchaseOrderEmailService>();
 
