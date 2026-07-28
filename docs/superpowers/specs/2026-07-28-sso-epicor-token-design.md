@@ -16,7 +16,7 @@ Permitir que un usuario que ya inició sesión en Epicor Kinetic entre a OCAutom
 
 1. **Login manual se mantiene** tal cual, sin cambios de comportamiento. El SSO es puramente aditivo.
 2. **Bearer JWT directo para las llamadas REST** de una sesión SSO — nunca se pide ni se guarda la contraseña real del usuario para este camino.
-3. **Re-emisión propia del token**: al validar el JWT que llega desde Kinetic, el backend firma su propio JWT (mismo formato, misma Sign Key, mismo `username`) con una vigencia de 8 horas (igual que la cookie de sesión actual), en vez de usar el original de 1 hora tal cual. Esto evita que el usuario se desconecte a media tarea.
+3. **Se reutiliza el token original de Kinetic para toda la sesión — nunca se re-emite uno propio.** *(Revisado en vivo tras el despliegue — ver "Fuera de alcance / riesgos conocidos" para la evidencia.)* Se probó primero re-emitir un JWT propio de 8 horas, pero se confirmó con el Admin Console de Epicor que un token que esta app firma por su cuenta (aunque sea para el mismo usuario) abre una sesión/licencia de Epicor **aparte** de la nativa de Kinetic, mientras que el token **original** —el mismo que ya usa la sesión de Kinetic abierta en el navegador— no abre ninguna. La cookie de sesión de OCAutomatica ahora dura exactamente lo que le queda de vida a ese token original (hoy, hasta 1 hora — lo que Epicor tenga configurado en Token Authentication → Lifetime), no un valor fijo de 8 horas. Pasado ese tiempo, el usuario tiene que volver a dar click al menú de Kinetic para renovar la sesión.
 4. **Auto-selección de compañía/planta** desde los parámetros `company`/`site` de la URL, siempre validados contra las compañías/plantas reales del usuario (nunca se confía a ciegas en un query param sin firmar). Si no coinciden, se cae al selector manual existente.
 5. **Sin pantalla de confirmación**: un token válido entra directo a la pantalla de trabajo. Un token ausente/inválido/expirado cae en silencio al formulario de login manual, sin mensaje de error visible.
 
@@ -34,11 +34,10 @@ Kinetic (menú "Web Bridge")
           → valida firma JWT (Sign Key) + expiración + iss/aud
           → username = claim del JWT
           → AuthService.ValidateAsync (reusa lógica existente, ahora vía Bearer)
-          → re-emite JWT propio (8h) con IEpicorTokenService.IssueSessionToken
-          → SessionStore.Create con BearerToken (no password)
+          → SessionStore.Create con el mismo BearerToken original (no password, no token propio)
           → auto-selecciona company si es válida para el usuario
-          → EstablishEpicorSessionAsync (Ice.Lib.SessionModSvc/Login, igual que hoy)
-          → set-cookie de sesión (igual que login manual)
+          → EstablishEpicorSessionAsync (Ice.Lib.SessionModSvc/Login, igual que hoy, con el token original)
+          → set-cookie de sesión con MaxAge = vigencia restante del token original
         ← SessionResponse (mismo shape que login manual)
       → si Company quedó fijada y hay `site` en la URL:
           POST /api/organization/context { plant: site } (endpoint ya existente)
@@ -57,9 +56,6 @@ public sealed class EpicorTokenOptions
 
     /// <summary>Sign Key configurada en Epicor Server Management → Token Authentication (Base64).</summary>
     public string SignKey { get; set; } = string.Empty;
-
-    /// <summary>Vigencia (segundos) de los tokens que esta app re-emite. Debe igualar la MaxAge de la cookie de sesión (8h = 28800).</summary>
-    public int SessionLifetimeSeconds { get; set; } = 28800;
 }
 ```
 Se lee de `appsettings` bajo la sección `EpicorToken`, con el mismo tratamiento de secreto que hoy tiene `Epicor:ApiKey` (nunca en el cliente, nunca en logs).
@@ -68,15 +64,13 @@ Se lee de `appsettings` bajo la sección `EpicorToken`, con el mismo tratamiento
 ```csharp
 public interface IEpicorTokenService
 {
-    bool TryValidate(string token, out string username);
-    string IssueSessionToken(string username);
+    bool TryValidate(string token, out string username, out DateTimeOffset expiresAtUtc);
 }
 ```
+*(Ajustado tras la revisión en vivo: ya no existe `IssueSessionToken` — este servicio solo valida, nunca emite. Ver Decisión de diseño 3.)*
 
 **`src/OCAutomatica.Api/Epicor/EpicorTokenService.cs`**
-- `TryValidate`: decodifica el JWT, verifica la firma HMACSHA256 con la Sign Key, verifica `iss == "epicor"` y `aud == "epicor"`, parsea `exp` (string → long) y confirma que no haya pasado. Si cualquier verificación falla, regresa `false` y `username` vacío — nunca lanza excepción por un token malformado (es una entrada no confiable del cliente).
-- `IssueSessionToken(username)`: construye un JWT con el mismo formato exacto observado (`iss`/`aud`/`username` como strings, `exp`/`iat` como strings de epoch), firmado con la misma Sign Key, con `exp = ahora + SessionLifetimeSeconds`.
-- **Regla de confianza no negociable**: `IssueSessionToken` solo se invoca desde `sso-login` con un `username` que salió de un `TryValidate` exitoso sobre un token que sí llegó firmado por Epicor. Nunca se expone como una operación que acepte un username arbitrario del cliente — eso sería una forma de suplantación total, ya que la Sign Key firma para cualquier usuario sin verificar contraseña.
+- `TryValidate`: decodifica el JWT, verifica la firma HMACSHA256 con la Sign Key, verifica `iss == "epicor"` y `aud == "epicor"`, parsea `exp` (string → long) y confirma que no haya pasado. Si la Sign Key configurada está vacía, rechaza de inmediato (nunca valida "en falso" contra una llave vacía). Si cualquier verificación falla, regresa `false`, `username` vacío y `expiresAtUtc = DateTimeOffset.MinValue` — nunca lanza excepción por un token malformado (es una entrada no confiable del cliente). Cuando el token es válido, `expiresAtUtc` expone su `exp` real, para que el llamador pueda alinear su propia sesión a esa misma vigencia.
 
 ### Backend — modificados
 
@@ -102,7 +96,7 @@ public sealed record SsoLoginRequest(string Token, string? Company, string? Site
 [HttpPost("sso-login")]
 public async Task<IActionResult> SsoLogin(SsoLoginRequest request, CancellationToken ct)
 ```
-- Pasos: `IEpicorTokenService.TryValidate` (401 si falla) → construir `EpicorCredentials` con `BearerToken` → `IAuthService.ValidateAsync` (reusa la lógica existente sin cambios, ya que solo depende de `IEpicorClient`, agnóstico al tipo de credencial) → si `companies` es null o vacío, mismo manejo de error que ya existe en `Login` → `IEpicorTokenService.IssueSessionToken(username)` para obtener el token de 8h → `_sessions.Create` con las credenciales Bearer re-emitidas → si `request.Company` está en la lista de companies del usuario, fijar contexto y llamar `EstablishEpicorSessionAsync` (mismo método privado ya existente, sin cambios) → set-cookie igual que `Login` → devolver el mismo `SessionResponse` (sin `Plant` fijado todavía — ver nota de frontend abajo).
+- Pasos: `IEpicorTokenService.TryValidate` (401 si falla; expone también `expiresAtUtc`) → construir `EpicorCredentials` con `BearerToken` = el token **original** → `IAuthService.ValidateAsync` (reusa la lógica existente sin cambios, ya que solo depende de `IEpicorClient`, agnóstico al tipo de credencial) → si `companies` es null o vacío, mismo manejo de error que ya existe en `Login` → `_sessions.Create` con esas mismas credenciales (sin re-emitir nada) → si `request.Company` está en la lista de companies del usuario, fijar contexto y llamar `EstablishEpicorSessionAsync` (mismo método privado ya existente, sin cambios, usando el token original) → set-cookie con `MaxAge = expiresAtUtc - ahora` (la vigencia real que le queda al token, no un valor fijo) → devolver el mismo `SessionResponse` (sin `Plant` fijado todavía — ver nota de frontend abajo).
 - **`Site`/planta**: esta acción NO intenta resolver la planta ni el comprador — eso ya lo hace `OrganizationController.SetContext` (`POST /api/organization/context`), que internamente resuelve el `BuyerId` a partir del `Plant`. Duplicar esa resolución dentro de `AuthController` sería reinventar lógica que ya existe. En su lugar, el auto-select de planta ocurre del lado del frontend (ver abajo).
 
 ### Frontend — nuevos/modificados
@@ -126,7 +120,7 @@ public async Task<IActionResult> SsoLogin(SsoLoginRequest request, CancellationT
 
 ## Testing
 
-- `EpicorTokenServiceTests`: firma y valida un token propio correctamente; rechaza firma inválida (Sign Key distinta); rechaza `exp` pasado; rechaza `iss`/`aud` distintos de `"epicor"`; `IssueSessionToken` produce un token que el propio `TryValidate` acepta (round-trip).
+- `EpicorTokenServiceTests`: valida un token bien firmado (construido de forma independiente al servicio, nunca contra su propio encoder); rechaza firma inválida (Sign Key distinta); rechaza `exp` pasado; rechaza `iss`/`aud` distintos de `"epicor"`; rechaza cuando la Sign Key configurada está vacía; expone correctamente el `expiresAtUtc` del token válido.
 - `EpicorClientTests`: con `BearerToken` presente, el request armado lleva `Authorization: Bearer <token>` y NO lleva el header Basic; sin `BearerToken`, comportamiento idéntico al actual (regresión).
 - `SessionStoreTests`: `Create`+`GetCredentials` con credenciales Bearer devuelve el `BearerToken` correcto y `Password` vacío; con credenciales de password, comportamiento idéntico al actual (regresión).
 - Integration test (`AuthControllerTests` o similar) para `POST /api/auth/sso-login`: token válido → 200 + cookie de sesión + `SessionResponse` correcto; token inválido/expirado → 401; `company`/`site` inexistentes para el usuario → 200 pero sin compañía/planta fijada (cae a selector).
@@ -135,13 +129,13 @@ public async Task<IActionResult> SsoLogin(SsoLoginRequest request, CancellationT
 
 - La Sign Key (`EpicorToken:SignKey`) nunca se expone al cliente, nunca se loggea, y se trata con el mismo cuidado que `Epicor:ApiKey` y la cadena de conexión SQL ya existentes en `appsettings`.
 - El comportamiento del login manual existente (endpoint, UI, mensajes) no cambia.
-- `IssueSessionToken` solo se invoca internamente tras un `TryValidate` exitoso sobre un token ya firmado por Epicor — nunca a partir de un username enviado libremente por el cliente.
+- Este servicio nunca emite tokens propios — solo valida los que ya llegaron firmados por Epicor. Ver Decisión de diseño 3.
 
 ## Fuera de alcance / riesgos conocidos (no bloquean esta implementación)
 
-- **Consumo de licencia**: no se ha verificado empíricamente si una sesión REST autenticada por Bearer JWT consume una licencia de Epicor separada de la sesión nativa de Kinetic que originó el token. Queda como verificación a hacer una vez la funcionalidad esté construida (comparar la lista de Sessions en el Admin Console antes/después de una sesión SSO activa).
+- **Consumo de licencia — CONFIRMADO en producción, ya con la mitigación aplicada.** Se probó en vivo contra el Admin Console de Epicor (Sessions): usar el token **original** de Kinetic vía Bearer (probado directo en Swagger, extraído de la cookie sin pasar por esta app) **no abre ninguna sesión nueva** — Epicor lo reconoce como parte de la sesión nativa ya abierta en el navegador. En cambio, cuando esta app re-emitía su propio token (diseño original, ya descartado — ver Decisión de diseño 3), cada login por el menú de Kinetic sí abría una sesión/licencia aparte, con SessionId propio, sin relación con la nativa. Por eso el diseño se cambió a reutilizar siempre el token original: elimina la licencia extra mientras ese token siga vigente. Lo que **no** se resuelve: cualquier llamada REST autenticada (Bearer o Basic, con o sin este SSO) sigue siendo, en general, una superficie distinta de la sesión nativa — la reutilización del token original solo evita la licencia extra en este caso específico porque Epicor lo reconoce como "el mismo" que la sesión de Kinetic, no porque hayamos eliminado el problema de raíz para toda interacción REST.
 - **Higiene de secretos en `appsettings`**: ya existe una brecha conocida y pendiente (contraseña de `sa` de SQL Server en texto plano, ver specs anteriores) — este diseño no la agrava ni la resuelve; la Sign Key se suma al mismo problema de fondo, ya identificado.
 - Cambios al puente `WebLink/Index.html` o a la configuración del menú en Kinetic: no forman parte de este plan (son propiedad de otro compañero/otro sistema); el diseño asume que la URL configurada hoy (`.../8443/?...`) sigue apuntando a la raíz de producción de OCAutomatica sin cambios.
 - **El token original viaja en un query string de la URL**: el puente WebLink navega a `.../?token=...`, y ese token queda expuesto en logs de servidor (IIS W3C logging registra `cs-uri-query` por defecto) y en el header `Referer` de las peticiones que el navegador hace antes de que `window.history.replaceState` limpie la URL (los recursos estáticos de `index.html` — script, CSS, favicon — ya salieron con el `Referer` completo). Mitigación pendiente de decidir con el dueño del puente WebLink: pedirle que use un fragmento de URL (`#token=...`, nunca enviado al servidor) en vez de un query param, y/o desactivar el logging de query string para este sitio en IIS.
-- **El token de 8 horas que esta app re-emite es indistinguible de uno emitido por Epicor**: si alguien reenvía ese token re-emitido a `sso-login`, `TryValidate` lo acepta y permite renovarlo indefinidamente (encadenar sesiones más allá de las 8 horas). El token nunca se expone al cliente y vive cifrado en memoria via `IDataProtector`, así que la exposición práctica es baja — se documenta como consecuencia de diseño aceptada, no como algo a resolver ahora.
-- **Al desplegar a producción, agregar la sección `EpicorToken` (con la Sign Key real) al `appsettings.Production.json` que se sube al servidor** — no viene incluida por defecto y `EpicorTokenService.TryValidate` ahora rechaza explícitamente cualquier intento de validación si `SignKey` está vacío (ver Fix 2 de la revisión final), así que sin este paso el login SSO simplemente no funcionará (fallará de forma segura, no insegura).
+- **Al desplegar a producción, agregar la sección `EpicorToken` (con la Sign Key real) al `appsettings.Production.json` que se sube al servidor** — no viene incluida por defecto y `EpicorTokenService.TryValidate` rechaza explícitamente cualquier intento de validación si `SignKey` está vacío, así que sin este paso el login SSO simplemente no funcionará (fallará de forma segura, no insegura).
+- **La sesión de OCAutomatica dura como máximo lo que dure el token de Kinetic** (hoy, hasta 1 hora — lo que Epicor tenga configurado en Token Authentication → Lifetime). Si Epicor cambia esa configuración, la duración de la sesión de esta app cambia con ella automáticamente (se lee de `expiresAtUtc`, nunca un valor fijo en este código) — no requiere ningún cambio de código si Epicor ajusta su Lifetime.

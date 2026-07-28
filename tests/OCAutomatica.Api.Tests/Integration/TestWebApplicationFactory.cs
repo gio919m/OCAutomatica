@@ -27,7 +27,6 @@ public sealed class TestWebApplicationFactory : WebApplicationFactory<Program>
             services.Configure<EpicorTokenOptions>(o =>
             {
                 o.SignKey = SsoSignKey;
-                o.SessionLifetimeSeconds = 28800;
             });
         });
     }

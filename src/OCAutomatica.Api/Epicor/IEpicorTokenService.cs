@@ -8,14 +8,11 @@ public interface IEpicorTokenService
     /// Authentication feature. Never throws for a malformed token — it is
     /// untrusted input from the client.
     /// </summary>
-    bool TryValidate(string token, out string username);
-
-    /// <summary>
-    /// Mints a new token in the exact same format, signed with the same Sign
-    /// Key, for <paramref name="username"/>. Callers must only ever pass a
-    /// username that came from a successful TryValidate call on an
-    /// Epicor-issued token — never a client-supplied value, since the Sign
-    /// Key can mint a valid token for any username with no password check.
-    /// </summary>
-    string IssueSessionToken(string username);
+    /// <param name="expiresAtUtc">
+    /// The token's own expiration, when valid — callers use this to size an
+    /// app-side session to match exactly how long the underlying Epicor
+    /// token stays usable. <see cref="DateTimeOffset.MinValue"/> when
+    /// <paramref name="token"/> is invalid.
+    /// </param>
+    bool TryValidate(string token, out string username, out DateTimeOffset expiresAtUtc);
 }

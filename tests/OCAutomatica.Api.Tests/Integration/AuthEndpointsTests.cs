@@ -414,17 +414,23 @@ public class AuthEndpointsTests
     }
 
     [Fact]
-    public async Task SsoLogin_EstablishesTheEpicorSession_WithARenewedTokenDifferentFromTheOriginal()
+    public async Task SsoLogin_EstablishesTheEpicorSession_WithTheOriginalToken()
     {
+        // Confirmed live: a token this app mints itself opens a second,
+        // untied Epicor session/license even for the same user, while the
+        // ORIGINAL Kinetic-issued token is recognized as the session already
+        // open in Kinetic and opens none — so every call for this session,
+        // including this one, must keep using the original token, never a
+        // freshly-minted one.
         using var factory = new TestWebApplicationFactory();
         factory.EpicorClient.OnGet = (_, _, _) => new UserCompListResponse
         {
             Value = new List<UserCompDto> { new() { Company = "CFSJ_LAF", CompanyName = "LA FE" } }
         };
-        string? renewedBearer = null;
+        string? sessionLoginBearer = null;
         factory.EpicorClient.OnPost = (_, relativePath, _, credentials) =>
         {
-            if (relativePath == "Ice.Lib.SessionModSvc/Login") renewedBearer = credentials.BearerToken;
+            if (relativePath == "Ice.Lib.SessionModSvc/Login") sessionLoginBearer = credentials.BearerToken;
             return null;
         };
         var originalToken = BuildKineticToken("epicor", TestWebApplicationFactory.SsoSignKey, DateTimeOffset.UtcNow);
@@ -433,8 +439,31 @@ public class AuthEndpointsTests
         await client.PostAsJsonAsync("/api/auth/sso-login",
             new { token = originalToken, company = "CFSJ_LAF", site = (string?)null });
 
-        Assert.NotNull(renewedBearer);
-        Assert.NotEqual(originalToken, renewedBearer);
+        Assert.Equal(originalToken, sessionLoginBearer);
+    }
+
+    [Fact]
+    public async Task SsoLogin_SetsTheCookiesMaxAge_ToMatchTheTokensRemainingLifetime()
+    {
+        using var factory = new TestWebApplicationFactory();
+        factory.EpicorClient.OnGet = (_, _, _) => new UserCompListResponse
+        {
+            Value = new List<UserCompDto> { new() { Company = "CFSJ_LAF", CompanyName = "LA FE" } }
+        };
+        var token = BuildKineticToken(
+            "epicor", TestWebApplicationFactory.SsoSignKey, DateTimeOffset.UtcNow, lifetimeSeconds: 3600);
+
+        using var client = factory.CreateSecureClient();
+        var response = await client.PostAsJsonAsync("/api/auth/sso-login",
+            new { token, company = "CFSJ_LAF", site = (string?)null });
+
+        var setCookie = response.Headers.GetValues("Set-Cookie").Single();
+        var match = System.Text.RegularExpressions.Regex.Match(setCookie, @"max-age=(\d+)");
+        Assert.True(match.Success);
+        var maxAgeSeconds = int.Parse(match.Groups[1].Value);
+        // Not the fixed 8h (28800s) this session used to get — bounded by the
+        // token's own ~3600s lifetime, with slack for test execution time.
+        Assert.InRange(maxAgeSeconds, 3590, 3600);
     }
 
     private sealed record CompanyOptionBody(string Company, string CompanyName);

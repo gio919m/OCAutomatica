@@ -21,10 +21,9 @@ public class EpicorTokenServiceTests
     private static readonly DateTimeOffset Now =
         new(2026, 7, 28, 12, 0, 0, TimeSpan.Zero);
 
-    private static EpicorTokenService BuildService(
-        string signKey = TestSignKey, int lifetimeSeconds = 28800, DateTimeOffset? at = null) =>
+    private static EpicorTokenService BuildService(string signKey = TestSignKey, DateTimeOffset? at = null) =>
         new(
-            Options.Create(new EpicorTokenOptions { SignKey = signKey, SessionLifetimeSeconds = lifetimeSeconds }),
+            Options.Create(new EpicorTokenOptions { SignKey = signKey }),
             new FixedTimeProvider(at ?? Now));
 
     private static string Base64UrlEncode(byte[] bytes) =>
@@ -46,58 +45,67 @@ public class EpicorTokenServiceTests
     }
 
     [Fact]
-    public void IssueSessionToken_ProducesATokenTryValidateAccepts()
+    public void TryValidate_AcceptsAWellSignedValidToken()
     {
         var service = BuildService();
+        var now = Now.ToUnixTimeSeconds();
+        var token = BuildRawToken(TestSignKey, "epicor", "epicor", "epicor", now, now + 3600);
 
-        var token = service.IssueSessionToken("epicor");
-
-        Assert.True(service.TryValidate(token, out var username));
+        Assert.True(service.TryValidate(token, out var username, out _));
         Assert.Equal("epicor", username);
     }
 
     [Fact]
-    public void IssueSessionToken_RoundTripsAUsernameDifferentFromTheIssuer()
+    public void TryValidate_ExtractsAUsernameDifferentFromTheIssuer()
     {
         var service = BuildService();
+        var now = Now.ToUnixTimeSeconds();
+        var token = BuildRawToken(TestSignKey, "epicor", "epicor", "jdoe", now, now + 3600);
 
-        var token = service.IssueSessionToken("jdoe");
-
-        Assert.True(service.TryValidate(token, out var username));
+        Assert.True(service.TryValidate(token, out var username, out _));
         Assert.Equal("jdoe", username);
+    }
+
+    [Fact]
+    public void TryValidate_ReturnsTheTokensExpiration()
+    {
+        var service = BuildService();
+        var now = Now.ToUnixTimeSeconds();
+        var exp = now + 3600;
+        var token = BuildRawToken(TestSignKey, "epicor", "epicor", "epicor", now, exp);
+
+        Assert.True(service.TryValidate(token, out _, out var expiresAtUtc));
+        Assert.Equal(DateTimeOffset.FromUnixTimeSeconds(exp), expiresAtUtc);
     }
 
     [Fact]
     public void TryValidate_RejectsATokenSignedWithADifferentKey()
     {
-        var issuer = BuildService(signKey: OtherSignKey);
         var validator = BuildService(signKey: TestSignKey);
+        var now = Now.ToUnixTimeSeconds();
+        var token = BuildRawToken(OtherSignKey, "epicor", "epicor", "epicor", now, now + 3600);
 
-        var token = issuer.IssueSessionToken("epicor");
-
-        Assert.False(validator.TryValidate(token, out _));
+        Assert.False(validator.TryValidate(token, out _, out _));
     }
 
     [Fact]
     public void TryValidate_RejectsAnExpiredToken()
     {
-        var issuer = BuildService(lifetimeSeconds: 3600, at: Now);
-        var token = issuer.IssueSessionToken("epicor");
-
         var validator = BuildService(at: Now.AddSeconds(3601));
+        var iat = Now.ToUnixTimeSeconds();
+        var token = BuildRawToken(TestSignKey, "epicor", "epicor", "epicor", iat, iat + 3600);
 
-        Assert.False(validator.TryValidate(token, out _));
+        Assert.False(validator.TryValidate(token, out _, out _));
     }
 
     [Fact]
     public void TryValidate_AcceptsATokenAtTheExactExpirationBoundaryMinusOneSecond()
     {
-        var issuer = BuildService(lifetimeSeconds: 3600, at: Now);
-        var token = issuer.IssueSessionToken("epicor");
-
         var validator = BuildService(at: Now.AddSeconds(3599));
+        var iat = Now.ToUnixTimeSeconds();
+        var token = BuildRawToken(TestSignKey, "epicor", "epicor", "epicor", iat, iat + 3600);
 
-        Assert.True(validator.TryValidate(token, out _));
+        Assert.True(validator.TryValidate(token, out _, out _));
     }
 
     [Theory]
@@ -109,7 +117,7 @@ public class EpicorTokenServiceTests
     {
         var service = BuildService();
 
-        Assert.False(service.TryValidate(malformed, out var username));
+        Assert.False(service.TryValidate(malformed, out var username, out _));
         Assert.Equal(string.Empty, username);
     }
 
@@ -121,7 +129,7 @@ public class EpicorTokenServiceTests
         var forged = BuildRawToken(TestSignKey, iss: "not-epicor", aud: "epicor", username: "epicor",
             iat: now, exp: now + 3600);
 
-        Assert.False(service.TryValidate(forged, out _));
+        Assert.False(service.TryValidate(forged, out _, out _));
     }
 
     [Fact]
@@ -132,17 +140,28 @@ public class EpicorTokenServiceTests
         var forged = BuildRawToken(TestSignKey, iss: "epicor", aud: "not-epicor", username: "epicor",
             iat: now, exp: now + 3600);
 
-        Assert.False(service.TryValidate(forged, out _));
+        Assert.False(service.TryValidate(forged, out _, out _));
     }
 
     [Fact]
     public void TryValidate_RejectsATokenWhoseSignatureWasTamperedWith()
     {
         var service = BuildService();
-        var token = service.IssueSessionToken("epicor");
+        var now = Now.ToUnixTimeSeconds();
+        var token = BuildRawToken(TestSignKey, "epicor", "epicor", "epicor", now, now + 3600);
         var parts = token.Split('.');
         var tampered = $"{parts[0]}.{parts[1]}.{parts[2][..^2]}xx";
 
-        Assert.False(service.TryValidate(tampered, out _));
+        Assert.False(service.TryValidate(tampered, out _, out _));
+    }
+
+    [Fact]
+    public void TryValidate_RejectsWhenSignKeyIsEmpty()
+    {
+        var service = BuildService(signKey: string.Empty);
+        var now = Now.ToUnixTimeSeconds();
+        var token = BuildRawToken(TestSignKey, "epicor", "epicor", "epicor", now, now + 3600);
+
+        Assert.False(service.TryValidate(token, out _, out _));
     }
 }

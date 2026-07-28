@@ -128,7 +128,7 @@ public sealed class AuthController : ControllerBase
     [HttpPost("sso-login")]
     public async Task<IActionResult> SsoLogin(SsoLoginRequest request, CancellationToken ct)
     {
-        if (!_tokens.TryValidate(request.Token, out var username))
+        if (!_tokens.TryValidate(request.Token, out var username, out var expiresAtUtc))
         {
             return Unauthorized(new { message = "Token de Epicor invalido o expirado." });
         }
@@ -177,8 +177,14 @@ public sealed class AuthController : ControllerBase
             });
         }
 
-        var renewedToken = _tokens.IssueSessionToken(username);
-        var credentials = new EpicorCredentials(username, string.Empty) { BearerToken = renewedToken };
+        // Reuses the original Kinetic-issued token for the whole session,
+        // rather than minting our own — confirmed live that a token this app
+        // mints itself (even for the same user) makes Epicor open a second,
+        // untied session/license, while the original token is recognized as
+        // the same session already open in Kinetic and opens none. The cost
+        // is that this session can only last as long as the original token
+        // does (see the cookie's MaxAge below), instead of a fixed 8 hours.
+        var credentials = originalCredentials;
 
         var sessionId = _sessions.Create(credentials);
         _sessions.SetAvailableCompanies(sessionId, companies);
@@ -208,7 +214,7 @@ public sealed class AuthController : ControllerBase
             HttpOnly = true,
             Secure = true,
             SameSite = SameSiteMode.Strict,
-            MaxAge = TimeSpan.FromHours(8)
+            MaxAge = expiresAtUtc - DateTimeOffset.UtcNow
         });
 
         _logger.LogInformation("SSO login succeeded for {Username} ({CompanyCount} companies)",

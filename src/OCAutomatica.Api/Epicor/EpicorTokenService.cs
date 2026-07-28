@@ -19,9 +19,10 @@ public sealed class EpicorTokenService : IEpicorTokenService
         _time = time;
     }
 
-    public bool TryValidate(string token, out string username)
+    public bool TryValidate(string token, out string username, out DateTimeOffset expiresAtUtc)
     {
         username = string.Empty;
+        expiresAtUtc = DateTimeOffset.MinValue;
 
         if (string.IsNullOrEmpty(_options.SignKey)) return false;
 
@@ -75,28 +76,8 @@ public sealed class EpicorTokenService : IEpicorTokenService
         if (_time.GetUtcNow().ToUnixTimeSeconds() >= exp) return false;
 
         username = payload.Username;
+        expiresAtUtc = DateTimeOffset.FromUnixTimeSeconds(exp);
         return true;
-    }
-
-    public string IssueSessionToken(string username)
-    {
-        var now = _time.GetUtcNow().ToUnixTimeSeconds();
-        var exp = now + _options.SessionLifetimeSeconds;
-
-        var header = Base64UrlEncode(Encoding.UTF8.GetBytes("""{"alg":"HS256","typ":"JWT"}"""));
-        var payload = Base64UrlEncode(JsonSerializer.SerializeToUtf8Bytes(new JwtPayload
-        {
-            Exp = exp.ToString(),
-            Iat = now.ToString(),
-            Iss = ExpectedIssuer,
-            Aud = ExpectedIssuer,
-            Username = username
-        }));
-
-        var signingInput = Encoding.UTF8.GetBytes($"{header}.{payload}");
-        var signature = Base64UrlEncode(ComputeSignature(signingInput));
-
-        return $"{header}.{payload}.{signature}";
     }
 
     private byte[] ComputeSignature(byte[] input)
@@ -104,9 +85,6 @@ public sealed class EpicorTokenService : IEpicorTokenService
         using var hmac = new HMACSHA256(Convert.FromBase64String(_options.SignKey));
         return hmac.ComputeHash(input);
     }
-
-    private static string Base64UrlEncode(byte[] bytes) =>
-        Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 
     private static byte[] Base64UrlDecode(string value)
     {
