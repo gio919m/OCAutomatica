@@ -9,6 +9,13 @@ namespace OCAutomatica.Api.Controllers;
 public sealed class AuthController : ControllerBase
 {
     public sealed record LoginRequest(string Username, string Password);
+
+    /// <summary>
+    /// Site is accepted but intentionally unused here — plant auto-selection
+    /// happens client-side via the existing POST /api/organization/context,
+    /// not inside this action. It's part of this DTO only so the frontend's
+    /// call site can pass all three URL params uniformly.
+    /// </summary>
     public sealed record SsoLoginRequest(string Token, string? Company, string? Site);
     public sealed record SelectCompanyRequest(string Company);
     public sealed record CompanyOption(string Company, string CompanyName);

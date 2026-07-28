@@ -23,6 +23,8 @@ public sealed class EpicorTokenService : IEpicorTokenService
     {
         username = string.Empty;
 
+        if (string.IsNullOrEmpty(_options.SignKey)) return false;
+
         var parts = token.Split('.');
         if (parts.Length != 3) return false;
 

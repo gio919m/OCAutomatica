@@ -57,6 +57,17 @@ public class EpicorTokenServiceTests
     }
 
     [Fact]
+    public void IssueSessionToken_RoundTripsAUsernameDifferentFromTheIssuer()
+    {
+        var service = BuildService();
+
+        var token = service.IssueSessionToken("jdoe");
+
+        Assert.True(service.TryValidate(token, out var username));
+        Assert.Equal("jdoe", username);
+    }
+
+    [Fact]
     public void TryValidate_RejectsATokenSignedWithADifferentKey()
     {
         var issuer = BuildService(signKey: OtherSignKey);

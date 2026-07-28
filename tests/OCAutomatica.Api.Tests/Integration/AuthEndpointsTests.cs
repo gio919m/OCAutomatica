@@ -370,6 +370,28 @@ public class AuthEndpointsTests
     }
 
     [Fact]
+    public async Task SsoLogin_AutoSelectsTheSingleCompany_WhenNoCompanyWasRequested()
+    {
+        using var factory = new TestWebApplicationFactory();
+        factory.EpicorClient.OnGet = (_, _, _) => new UserCompListResponse
+        {
+            Value = new List<UserCompDto>
+            {
+                new() { Company = "CFSJ_LAF", CompanyName = "Carnes Finas San Juan Laredo" }
+            }
+        };
+        var token = BuildKineticToken("epicor", TestWebApplicationFactory.SsoSignKey, DateTimeOffset.UtcNow);
+
+        using var client = factory.CreateSecureClient();
+        var response = await client.PostAsJsonAsync("/api/auth/sso-login",
+            new { token, company = (string?)null, site = (string?)null });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<LoginResponseBody>();
+        Assert.Equal("CFSJ_LAF", body!.Company);
+    }
+
+    [Fact]
     public async Task SsoLogin_QueriesCompaniesUsingBearerAuth_WithTheOriginalToken()
     {
         using var factory = new TestWebApplicationFactory();

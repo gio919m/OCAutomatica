@@ -39,18 +39,23 @@ export default function App() {
   const [vendor, setVendor] = useState<Vendor | null>(null)
   const [rows, setRows] = useState<PartRowState[]>([])
   const [activeTab, setActiveTab] = useState<'nueva' | 'historial'>('nueva')
+  const [ssoSiteAttempted, setSsoSiteAttempted] = useState(false)
 
   useEffect(() => {
-    if (!session?.company || !ssoSite || context) return
+    if (!session?.company || !ssoSite || context || ssoSiteAttempted) return
 
     api
       .setContext(ssoSite)
-      .then(setContext)
+      .then((ctx) => {
+        setContext(ctx)
+        setSsoSiteAttempted(true)
+      })
       .catch(() => {
         // The site hint from Kinetic isn't a valid plant for this user/company
         // — fall through to the normal ContextPicker, no error shown.
+        setSsoSiteAttempted(true)
       })
-  }, [session?.company, ssoSite, context])
+  }, [session?.company, ssoSite, context, ssoSiteAttempted])
 
   if (loading) return <div className="page-loading">Cargando...</div>
 
@@ -67,7 +72,10 @@ export default function App() {
     return <CompanyPicker companies={session.companies} onCompanySelected={setSession} />
   }
 
-  if (!context) return <ContextPicker onContextSet={setContext} />
+  if (!context) {
+    if (ssoSite && !ssoSiteAttempted) return <div className="page-loading">Cargando...</div>
+    return <ContextPicker onContextSet={setContext} />
+  }
 
   function handleVendorSelected(selected: Vendor) {
     setVendor(selected)

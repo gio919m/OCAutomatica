@@ -7,3 +7,4 @@ dist/
 appsettings.Development.json
 appsettings.Production.json
 TestResults/
+publish/
