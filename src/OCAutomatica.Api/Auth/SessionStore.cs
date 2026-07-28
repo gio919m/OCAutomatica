@@ -9,7 +9,7 @@ public sealed class SessionStore : ISessionStore
 {
     private const string ProtectorPurpose = "OCAutomatica.SessionCredentials";
 
-    private sealed record Entry(UserSession Session, string ProtectedPassword);
+    private sealed record Entry(UserSession Session, string ProtectedSecret, bool IsBearer);
 
     private readonly ConcurrentDictionary<string, Entry> _entries = new();
     private readonly IDataProtector _protector;
@@ -32,7 +32,10 @@ public sealed class SessionStore : ISessionStore
             LastSeenUtc = _time.GetUtcNow()
         };
 
-        _entries[sessionId] = new Entry(session, _protector.Protect(credentials.Password));
+        var isBearer = !string.IsNullOrEmpty(credentials.BearerToken);
+        var secret = isBearer ? credentials.BearerToken! : credentials.Password;
+
+        _entries[sessionId] = new Entry(session, _protector.Protect(secret), isBearer);
         return sessionId;
     }
 
@@ -48,8 +51,10 @@ public sealed class SessionStore : ISessionStore
     {
         if (!_entries.TryGetValue(sessionId, out var entry)) return null;
 
-        var password = _protector.Unprotect(entry.ProtectedPassword);
-        return new EpicorCredentials(entry.Session.Username, password);
+        var secret = _protector.Unprotect(entry.ProtectedSecret);
+        return entry.IsBearer
+            ? new EpicorCredentials(entry.Session.Username, string.Empty) { BearerToken = secret }
+            : new EpicorCredentials(entry.Session.Username, secret);
     }
 
     public void SetAvailableCompanies(string sessionId, IReadOnlyList<CompanyAccess> companies)

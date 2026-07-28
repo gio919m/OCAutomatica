@@ -92,4 +92,33 @@ public class SessionStoreTests
 
         Assert.Null(store.Get(sessionId));
     }
+
+    [Fact]
+    public void GetCredentials_RoundTripsBearerToken_InsteadOfPassword()
+    {
+        var store = BuildStore();
+        var sessionId = store.Create(
+            new EpicorCredentials("epicor", string.Empty) { BearerToken = "header.payload.signature" });
+
+        var credentials = store.GetCredentials(sessionId);
+
+        Assert.NotNull(credentials);
+        Assert.Equal("epicor", credentials!.Username);
+        Assert.Equal("header.payload.signature", credentials.BearerToken);
+        Assert.Equal(string.Empty, credentials.Password);
+    }
+
+    [Fact]
+    public void GetCredentials_StillRoundTripsPassword_ForANonSsoSession()
+    {
+        // Regression guard: sessions created from the manual login path
+        // (no BearerToken) must behave exactly as before this task.
+        var store = BuildStore();
+        var sessionId = store.Create(new EpicorCredentials("jyanez", "secreto"));
+
+        var credentials = store.GetCredentials(sessionId);
+
+        Assert.Equal("secreto", credentials!.Password);
+        Assert.Null(credentials.BearerToken);
+    }
 }
