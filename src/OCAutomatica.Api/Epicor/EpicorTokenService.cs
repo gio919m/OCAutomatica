@@ -70,7 +70,13 @@ public sealed class EpicorTokenService : IEpicorTokenService
         }
 
         if (payload is null) return false;
-        if (payload.Iss != ExpectedIssuer || payload.Aud != ExpectedIssuer) return false;
+        if (payload.Iss != ExpectedIssuer) return false;
+        // Aud is NOT checked against a fixed value: confirmed live that Epicor
+        // itself issues "epicor" for a fresh interactive login but a
+        // "00000000-..." GUID for a token Kinetic silently renewed in the
+        // background — both are genuinely valid (Epicor's own REST API
+        // accepts both as Bearer auth). Iss plus the signature check below
+        // are what actually prove the token came from Epicor.
         if (string.IsNullOrWhiteSpace(payload.Username)) return false;
         if (!long.TryParse(payload.Exp, out var exp)) return false;
         if (_time.GetUtcNow().ToUnixTimeSeconds() >= exp) return false;

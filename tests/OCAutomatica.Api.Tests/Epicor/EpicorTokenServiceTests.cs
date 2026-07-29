@@ -133,14 +133,20 @@ public class EpicorTokenServiceTests
     }
 
     [Fact]
-    public void TryValidate_RejectsAWellSignedTokenWithTheWrongAudience()
+    public void TryValidate_AcceptsAnyAudienceValue_AsLongAsIssuerIsEpicor()
     {
+        // Confirmed live: Epicor itself issues "epicor" as aud for a fresh
+        // interactive login, but a "00000000-..." GUID for a token Kinetic
+        // silently renewed in the background — both accepted by Epicor's own
+        // REST API as valid Bearer auth, so this service must accept both too.
         var service = BuildService();
         var now = Now.ToUnixTimeSeconds();
-        var forged = BuildRawToken(TestSignKey, iss: "epicor", aud: "not-epicor", username: "epicor",
+        var renewed = BuildRawToken(TestSignKey, iss: "epicor",
+            aud: "00000000-0000-0000-0000-000000000000", username: "epicor",
             iat: now, exp: now + 3600);
 
-        Assert.False(service.TryValidate(forged, out _, out _));
+        Assert.True(service.TryValidate(renewed, out var username, out _));
+        Assert.Equal("epicor", username);
     }
 
     [Fact]
