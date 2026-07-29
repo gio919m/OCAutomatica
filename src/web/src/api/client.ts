@@ -103,12 +103,26 @@ export class ApiError extends Error {
   }
 }
 
+// A single choke point for "the session died mid-use" (expired SSO token,
+// server restart, etc.) — every API call goes through request(), so this is
+// the one place that needs to notice a 401 and tell useSession to drop back
+// to the login screen, instead of every component handling it separately.
+let onUnauthorized: (() => void) | null = null
+
+export function setUnauthorizedHandler(handler: (() => void) | null) {
+  onUnauthorized = handler
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     ...init,
     credentials: 'include',
     headers: { 'Content-Type': 'application/json', ...init?.headers },
   })
+
+  if (response.status === 401) {
+    onUnauthorized?.()
+  }
 
   if (!response.ok) {
     let message = 'Ocurrio un error inesperado.'

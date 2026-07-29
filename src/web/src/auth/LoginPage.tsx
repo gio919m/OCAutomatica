@@ -3,9 +3,10 @@ import { api, type Session } from '../api/client'
 
 interface Props {
   onSignedIn: (session: Session) => void
+  sessionExpired?: boolean
 }
 
-export function LoginPage({ onSignedIn }: Props) {
+export function LoginPage({ onSignedIn, sessionExpired }: Props) {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -65,6 +66,9 @@ export function LoginPage({ onSignedIn }: Props) {
           />
         </div>
 
+        {sessionExpired && !error && (
+          <p role="alert">Tu sesion expiro. Vuelve a iniciar sesion.</p>
+        )}
         {error && <p role="alert">{error}</p>}
 
         <button type="submit" disabled={busy} style={{ width: '100%', marginTop: 'var(--space-2)' }}>

@@ -34,7 +34,7 @@ function Step({
 }
 
 export default function App() {
-  const { session, setSession, loading, signOut, ssoSite } = useSession()
+  const { session, setSession, loading, signOut, ssoSite, sessionExpired } = useSession()
   const [context, setContext] = useState<Context | null>(null)
   const [vendor, setVendor] = useState<Vendor | null>(null)
   const [rows, setRows] = useState<PartRowState[]>([])
@@ -66,7 +66,7 @@ export default function App() {
     setRows([])
   }
 
-  if (!session) return <LoginPage onSignedIn={setSession} />
+  if (!session) return <LoginPage onSignedIn={setSession} sessionExpired={sessionExpired} />
 
   if (!session.company) {
     return <CompanyPicker companies={session.companies} onCompanySelected={setSession} />

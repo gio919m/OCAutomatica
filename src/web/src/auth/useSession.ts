@@ -1,10 +1,24 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api, type Session } from '../api/client'
+import { api, setUnauthorizedHandler, type Session } from '../api/client'
 
 export function useSession() {
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
   const [ssoSite, setSsoSite] = useState<string | null>(null)
+  const [sessionExpired, setSessionExpired] = useState(false)
+
+  useEffect(() => {
+    // Only a 401 that arrives while a session was actually active counts as
+    // "it expired" — the very first api.me() call on a fresh visit also
+    // 401s (nobody's logged in yet), and that's not worth announcing.
+    setUnauthorizedHandler(() => {
+      setSession((prev) => {
+        if (prev) setSessionExpired(true)
+        return null
+      })
+    })
+    return () => setUnauthorizedHandler(null)
+  }, [])
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -39,7 +53,8 @@ export function useSession() {
     await api.logout()
     setSession(null)
     setSsoSite(null)
+    setSessionExpired(false)
   }, [])
 
-  return { session, setSession, loading, signOut, ssoSite }
+  return { session, setSession, loading, signOut, ssoSite, sessionExpired }
 }
