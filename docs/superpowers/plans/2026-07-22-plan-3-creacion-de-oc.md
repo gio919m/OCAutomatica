@@ -615,6 +615,19 @@ try
 
     // ===== FASE 3: aprobar solo hasta que TODAS las lineas quedaron guardadas =====
     // Aprobar antes deja la orden bloqueada si una linea posterior falla (ver nota Fase 1).
+    //
+    // Se vuelve a traer el dataset fresco antes de aprobar (bug real, encontrado
+    // en produccion 2026-07-29): agregar lineas puede hacer que Epicor recalcule
+    // campos del encabezado (totales, etc.), avanzando su SysRevID en la base -
+    // pero currentDs todavia carga la version del encabezado de antes de esos
+    // recalculos. Mandar esa version vieja al Update() final de Fase 3 causaba
+    // "Row has been modified by another user and couldn't be updated." para
+    // ciertos proveedores (confirmado con BIMBO SA DE CV, 000184) aunque nadie
+    // mas la hubiera tocado en realidad - era el propio Epicor recalculando.
+    this.CallService<Erp.Contracts.POSvcContract>(BO => {
+        currentDs = BO.GetByID(poNum);
+    });
+
     var finalHeader = currentDs.POHeader.FirstOrDefault(h => h.PONum == poNum) ?? currentDs.POHeader[0];
     finalHeader.Approve = true;
     finalHeader.ApprovalStatus = "A";
