@@ -414,23 +414,23 @@ public class AuthEndpointsTests
     }
 
     [Fact]
-    public async Task SsoLogin_EstablishesTheEpicorSession_WithTheOriginalToken()
+    public async Task SsoLogin_NeverCallsSessionModSvcLogin()
     {
-        // Confirmed live: a token this app mints itself opens a second,
-        // untied Epicor session/license even for the same user, while the
-        // ORIGINAL Kinetic-issued token is recognized as the session already
-        // open in Kinetic and opens none — so every call for this session,
-        // including this one, must keep using the original token, never a
-        // freshly-minted one.
+        // Confirmed live: Ice.Lib.SessionModSvc/Login's entire purpose is to
+        // create a brand-new tracked Epicor session/license — calling it
+        // always opens one, regardless of which token authenticates the
+        // call. An SSO session already rides on the session Kinetic's own
+        // browser tab holds open, so this app must never call Login for one
+        // (that's what was opening a second, untied session/license).
         using var factory = new TestWebApplicationFactory();
         factory.EpicorClient.OnGet = (_, _, _) => new UserCompListResponse
         {
             Value = new List<UserCompDto> { new() { Company = "CFSJ_LAF", CompanyName = "LA FE" } }
         };
-        string? sessionLoginBearer = null;
-        factory.EpicorClient.OnPost = (_, relativePath, _, credentials) =>
+        var sessionModSvcCalled = false;
+        factory.EpicorClient.OnPost = (_, relativePath, _, _) =>
         {
-            if (relativePath == "Ice.Lib.SessionModSvc/Login") sessionLoginBearer = credentials.BearerToken;
+            if (relativePath == "Ice.Lib.SessionModSvc/Login") sessionModSvcCalled = true;
             return null;
         };
         var originalToken = BuildKineticToken("epicor", TestWebApplicationFactory.SsoSignKey, DateTimeOffset.UtcNow);
@@ -439,7 +439,36 @@ public class AuthEndpointsTests
         await client.PostAsJsonAsync("/api/auth/sso-login",
             new { token = originalToken, company = "CFSJ_LAF", site = (string?)null });
 
-        Assert.Equal(originalToken, sessionLoginBearer);
+        Assert.False(sessionModSvcCalled);
+    }
+
+    [Fact]
+    public async Task Logout_NeverCallsSessionModSvcLogout_ForAnSsoSession()
+    {
+        // Guards against accidentally signing the user out of their native
+        // Kinetic browser session: this app never called Login for an SSO
+        // session, so there is no session of ours to release, and calling
+        // Logout anyway (with no SessionInfo to target) risks tearing down
+        // the wrong (implicit) session tied to that Bearer token.
+        using var factory = new TestWebApplicationFactory();
+        factory.EpicorClient.OnGet = (_, _, _) => new UserCompListResponse
+        {
+            Value = new List<UserCompDto> { new() { Company = "CFSJ_LAF", CompanyName = "LA FE" } }
+        };
+        var sessionModSvcCalled = false;
+        factory.EpicorClient.OnPost = (_, relativePath, _, _) =>
+        {
+            if (relativePath.StartsWith("Ice.Lib.SessionModSvc")) sessionModSvcCalled = true;
+            return null;
+        };
+        var originalToken = BuildKineticToken("epicor", TestWebApplicationFactory.SsoSignKey, DateTimeOffset.UtcNow);
+
+        using var client = factory.CreateSecureClient();
+        await client.PostAsJsonAsync("/api/auth/sso-login",
+            new { token = originalToken, company = "CFSJ_LAF", site = (string?)null });
+        await client.PostAsync("/api/auth/logout", null);
+
+        Assert.False(sessionModSvcCalled);
     }
 
     [Fact]

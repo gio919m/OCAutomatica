@@ -311,10 +311,18 @@ public sealed class AuthController : ControllerBase
     /// point Logout at this exact session via the SessionInfo header.
     /// Best-effort: if this fails, the app still works over plain Basic Auth;
     /// we simply won't be able to release the license on sign-out.
+    ///
+    /// A no-op for SSO (Bearer) sessions: confirmed live that Ice.Lib.SessionModSvc/Login
+    /// always creates a brand-new tracked Epicor session/license regardless of which
+    /// token authenticates the call — that's the endpoint's entire purpose. An SSO
+    /// session already rides on the session Kinetic's own browser tab holds open;
+    /// calling this here would just open a second, untied one for no benefit.
     /// </summary>
     private async Task EstablishEpicorSessionAsync(
         string sessionId, string company, EpicorCredentials credentials, CancellationToken ct)
     {
+        if (!string.IsNullOrEmpty(credentials.BearerToken)) return;
+
         try
         {
             var response = await _epicor.PostAsync<EpicorLoginResponse>(
@@ -339,6 +347,15 @@ public sealed class AuthController : ControllerBase
     /// ({"SessionID":"..."}) naming the exact session created by Login —
     /// confirmed live against the real server. A failure here must never
     /// block the user's own sign-out.
+    ///
+    /// A no-op for SSO (Bearer) sessions: this app never called Login for
+    /// one (see EstablishEpicorSessionAsync), so there is no session of ours
+    /// to release. Calling Logout anyway, with no SessionInfo header to
+    /// target a specific session, risks Epicor tearing down the wrong
+    /// (implicit) session tied to that Bearer token — which could be the
+    /// user's own native Kinetic browser session, not anything this app
+    /// opened. Signing out of OCAutomatica must never sign the user out of
+    /// Kinetic itself.
     /// </summary>
     private async Task ReleaseEpicorSessionAsync(string sessionId, CancellationToken ct)
     {
@@ -348,6 +365,8 @@ public sealed class AuthController : ControllerBase
         {
             return;
         }
+
+        if (!string.IsNullOrEmpty(credentials.BearerToken)) return;
 
         var logoutCredentials = string.IsNullOrEmpty(session.EpicorSessionId)
             ? credentials
